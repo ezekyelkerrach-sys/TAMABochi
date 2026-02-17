@@ -1,0 +1,2331 @@
+<script>
+  // ============================================================================
+  //                         VARIABLES GLOBALES
+  // ============================================================================
+
+  let CONFIG = {};
+  let CURRENT_USER = null;
+  let modalFicheInstance, modalConflitInstance, modalEventInstance, modalEditInstance, modalReminderInstance;
+  let modalUpdateReminderInstance, modalCloseReminderInstance, modalGroupInstance, modalReportInstance, modalEditEventInstance;
+  let modalEvictionInstance, modalRappelFromViewInstance;
+  // NOUVEAU : modales commentaire, gestion favoris, création favori, liaison groupe
+  let modalAddCommentInstance, modalManageFavorisInstance, modalCustomizeFavoriInstance, modalGroupLinkInstance;
+  let currentJeuneData = null;
+  let selectedIds = new Set();
+  let isMassAction = false;
+  let GLOBAL_RAPPELS = [];
+  let GLOBAL_STATS_DATA = null;
+  let CURRENT_HISTORY = [];
+  let CURRENT_SEARCH_RESULTS = [];
+  // U4 : Map des rappels en retard par jeune
+  let RAPPELS_RETARD_MAP = {};
+  // U6 : Contexte de navigation pour le fil d'ariane
+  let FICHE_ORIGIN = null; // 'suivi', 'rappels', 'dashboard'
+  // U2 : Timer debounce
+  let searchDebounceTimer = null;
+  // U13 : Session timer
+  let sessionTimeoutId = null;
+  let sessionWarningId = null;
+  let sessionCountdownId = null;
+  let SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+  let SESSION_WARNING_MS = 2 * 60 * 1000; // Avertissement 2 min avant
+  // NOUVEAU : Favoris stats (stockés en localStorage)
+  let STATS_FAVORIS = [];
+  // NOUVEAU : Données stats détaillées pour affichage dynamique
+  let GLOBAL_STATS_DETAILED = null;
+  // NOUVEAU : Sélection temporaire pour liaison groupe
+  let GROUP_LINK_SELECTED = [];
+
+  // ============================================================================
+  //                         AUTHENTIFICATION
+  // ============================================================================
+
+  function attemptLogin() {
+    var email = document.getElementById('login-email').value;
+    var pass = document.getElementById('login-pass').value;
+    document.getElementById('loader').style.display = 'block';
+    google.script.run.withSuccessHandler(function(res) {
+      document.getElementById('loader').style.display = 'none';
+      if (res.success) {
+        CURRENT_USER = res.user;
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('app-content').style.setProperty('display', 'block', 'important');
+        document.getElementById('user-display').innerText = "👤" + res.user.nom;
+
+        loadConfig();
+
+        // Initialisation de toutes les modales Bootstrap
+        modalFicheInstance = new bootstrap.Modal(document.getElementById('modalFicheJeune'));
+        modalConflitInstance = new bootstrap.Modal(document.getElementById('modalConflit'));
+        modalEventInstance = new bootstrap.Modal(document.getElementById('modalAddEvent'));
+        modalEditInstance = new bootstrap.Modal(document.getElementById('modalEditProfile'));
+        modalReminderInstance = new bootstrap.Modal(document.getElementById('modalAddReminder'));
+        modalUpdateReminderInstance = new bootstrap.Modal(document.getElementById('modalUpdateReminder'));
+        modalCloseReminderInstance = new bootstrap.Modal(document.getElementById('modalCloseReminder'));
+        modalGroupInstance = new bootstrap.Modal(document.getElementById('modalGroupMembers'));
+        modalReportInstance = new bootstrap.Modal(document.getElementById('modalReport'));
+        modalEditEventInstance = new bootstrap.Modal(document.getElementById('modalEditEvent'));
+        modalEvictionInstance = new bootstrap.Modal(document.getElementById('modalEviction'));
+        modalRappelFromViewInstance = new bootstrap.Modal(document.getElementById('modalRappelFromView'));
+        // NOUVEAU : modales ajoutées
+        modalAddCommentInstance = new bootstrap.Modal(document.getElementById('modalAddComment'));
+        modalManageFavorisInstance = new bootstrap.Modal(document.getElementById('modalManageFavoris'));
+        modalCustomizeFavoriInstance = new bootstrap.Modal(document.getElementById('modalCustomizeFavori'));
+        modalGroupLinkInstance = new bootstrap.Modal(document.getElementById('modalGroupLink'));
+
+        // NOUVEAU : Charger les favoris depuis localStorage
+        loadFavorisFromStorage();
+
+        loadDashboard();
+        // U13 : Démarrer le timer de session
+        resetSessionTimer();
+      } else {
+        document.getElementById('login-error').innerText = res.message;
+      }
+    }).loginUser(email, pass);
+  }
+
+  function logout() {
+    clearSessionTimer();
+    location.reload();
+  }
+
+  // ============================================================================
+  //                    U13 : GESTION DU TIMEOUT DE SESSION
+  // ============================================================================
+
+  function resetSessionTimer() {
+    clearSessionTimer();
+    document.getElementById('session-warning').style.display = 'none';
+
+    // Timer principal : déconnexion après SESSION_TIMEOUT_MS
+    sessionTimeoutId = setTimeout(function() {
+      logout();
+    }, SESSION_TIMEOUT_MS);
+
+    // Timer avertissement : afficher le warning 2 min avant
+    sessionWarningId = setTimeout(function() {
+      showSessionWarning();
+    }, SESSION_TIMEOUT_MS - SESSION_WARNING_MS);
+  }
+
+  function clearSessionTimer() {
+    if (sessionTimeoutId) clearTimeout(sessionTimeoutId);
+    if (sessionWarningId) clearTimeout(sessionWarningId);
+    if (sessionCountdownId) clearInterval(sessionCountdownId);
+    sessionTimeoutId = null;
+    sessionWarningId = null;
+    sessionCountdownId = null;
+  }
+
+  function showSessionWarning() {
+    var warningDiv = document.getElementById('session-warning');
+    warningDiv.style.display = 'block';
+    var seconds = Math.floor(SESSION_WARNING_MS / 1000);
+    document.getElementById('session-countdown').innerText = seconds;
+    sessionCountdownId = setInterval(function() {
+      seconds--;
+      document.getElementById('session-countdown').innerText = seconds;
+      if (seconds <= 0) {
+        clearInterval(sessionCountdownId);
+      }
+    }, 1000);
+  }
+
+  // Écouter les interactions utilisateur pour reset le timer
+  document.addEventListener('click', function() { if (CURRENT_USER) resetSessionTimer(); });
+  document.addEventListener('keydown', function() { if (CURRENT_USER) resetSessionTimer(); });
+
+  // ============================================================================
+  //                         CONFIGURATION & NAVIGATION
+  // ============================================================================
+
+  function loadConfig() {
+    google.script.run.withSuccessHandler(function(data) {
+      CONFIG = data;
+      initAllDropdowns();
+      // Date du jour par défaut
+      document.getElementById('new-date-rencontre').valueAsDate = new Date();
+    }).getConfigData();
+  }
+
+  function navigate(viewName) {
+    document.querySelectorAll('.content-view').forEach(function(el) {
+      el.classList.add('d-none');
+    });
+    document.getElementById('view-' + viewName).classList.remove('d-none');
+
+    // Highlight du nav actif
+    document.querySelectorAll('.nav-link').forEach(function(link) {
+      link.classList.remove('active');
+    });
+    var links = document.querySelectorAll('.nav-link');
+    for (var i = 0; i < links.length; i++) {
+      var onclickAttr = links[i].getAttribute('onclick');
+      if (onclickAttr && onclickAttr.indexOf(viewName) !== -1) {
+        links[i].classList.add('active');
+      }
+    }
+
+    if (viewName === 'rappels') loadRappels();
+    if (viewName === 'dashboard') loadDashboard();
+  }
+
+  // ============================================================================
+  //              M6 : COMPOSANT CUSTOM DROPDOWN (MULTI/SINGLE SELECT)
+  // ============================================================================
+
+  // Map pour tracker quelles modales ont déjà été initialisées
+  var initializedModals = new Set();
+
+  function initAllDropdowns() {
+    // Ne construire que les dropdowns hors modales immédiatement
+    // Les dropdowns dans les modales seront construits à l'ouverture (lazy init)
+    document.querySelectorAll('.custom-dropdown').forEach(function(container) {
+      var isInModal = container.closest('.modal');
+      if (!isInModal) {
+        buildDropdown(container);
+      }
+    });
+
+    // Lazy init via listener show.bs.modal
+    document.querySelectorAll('.modal').forEach(function(modal) {
+      modal.addEventListener('show.bs.modal', function() {
+        ensureModalDropdowns(modal.id);
+      });
+    });
+  }
+
+  // Fonction appelable manuellement AVANT d'ouvrir une modale
+  function ensureModalDropdowns(modalId) {
+    if (initializedModals.has(modalId)) return;
+    var modal = document.getElementById(modalId);
+    if (!modal) return;
+    modal.querySelectorAll('.custom-dropdown').forEach(function(dd) {
+      if (!dd.querySelector('.dropdown-toggle-custom')) {
+        buildDropdown(dd);
+      }
+    });
+    initializedModals.add(modalId);
+  }
+
+  function buildDropdown(container) {
+    var configKey = container.getAttribute('data-config');
+    var mode = container.getAttribute('data-mode') || 'single';
+    var placeholder = container.getAttribute('data-placeholder') || 'Sélectionner...';
+    var onchangeFunc = container.getAttribute('data-onchange') || null;
+
+    // Hardcode pour Genre (pas de liste dans BDD_CONFIG)
+    var items;
+    if (configKey === 'GENRE') {
+      items = ['Garçon', 'Fille', 'Non connu'];
+    } else {
+      items = CONFIG[configKey] || [];
+    }
+
+    // Utiliser DocumentFragment pour un rendu rapide
+    container.innerHTML = '';
+
+    var toggle = document.createElement('div');
+    toggle.className = 'dropdown-toggle-custom';
+    toggle.setAttribute('tabindex', '0');
+    toggle.innerHTML = '<span class="selected-text placeholder">' + placeholder + '</span><i class="fas fa-chevron-down dropdown-arrow"></i>';
+    container.appendChild(toggle);
+
+    var menu = document.createElement('div');
+    menu.className = 'dropdown-menu-custom';
+
+    var searchDiv = document.createElement('div');
+    searchDiv.className = 'dropdown-search';
+    var searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Filtrer...';
+    searchDiv.appendChild(searchInput);
+    menu.appendChild(searchDiv);
+
+    var fragment = document.createDocumentFragment();
+    items.forEach(function(item, idx) {
+      var strItem = String(item);
+      if (strItem.startsWith('---') && strItem.endsWith('---')) {
+        var header = document.createElement('div');
+        header.className = 'dropdown-item-custom is-header';
+        header.textContent = strItem.replace(/---/g, '').trim();
+        fragment.appendChild(header);
+      } else {
+        var itemDiv = document.createElement('div');
+        itemDiv.className = 'dropdown-item-custom';
+        itemDiv.setAttribute('data-value', strItem);
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.id = container.id + '_opt_' + idx;
+        cb.value = strItem;
+        var lbl = document.createElement('label');
+        lbl.setAttribute('for', cb.id);
+        lbl.textContent = strItem;
+        itemDiv.appendChild(cb);
+        itemDiv.appendChild(lbl);
+        fragment.appendChild(itemDiv);
+      }
+    });
+    menu.appendChild(fragment);
+    container.appendChild(menu);
+
+    if (mode === 'multi') {
+      var tagsDiv = document.createElement('div');
+      tagsDiv.className = 'selected-tags';
+      container.appendChild(tagsDiv);
+    }
+
+    // ---- Event Listeners ----
+
+    toggle.addEventListener('click', function(e) {
+      e.stopPropagation();
+      document.querySelectorAll('.custom-dropdown.open').forEach(function(other) {
+        if (other !== container) other.classList.remove('open');
+      });
+      container.classList.toggle('open');
+      if (container.classList.contains('open')) {
+        searchInput.value = '';
+        filterDropdownItems(container, '');
+        searchInput.focus();
+      }
+    });
+
+    searchInput.addEventListener('input', function(e) {
+      e.stopPropagation();
+      filterDropdownItems(container, this.value);
+    });
+    searchInput.addEventListener('click', function(e) { e.stopPropagation(); });
+
+    container.querySelectorAll('.dropdown-item-custom:not(.is-header)').forEach(function(itemEl) {
+      itemEl.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var cb = this.querySelector('input[type="checkbox"]');
+
+        if (mode === 'single') {
+          container.querySelectorAll('.dropdown-item-custom input[type="checkbox"]').forEach(function(otherCb) {
+            otherCb.checked = false;
+          });
+          cb.checked = true;
+          container.classList.remove('open');
+        } else {
+          cb.checked = !cb.checked;
+        }
+
+        updateDropdownDisplay(container);
+
+        if (onchangeFunc && typeof window[onchangeFunc] === 'function') {
+          window[onchangeFunc]();
+        }
+      });
+    });
+  }
+
+  // Fermer tous les dropdowns au clic en dehors
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.custom-dropdown')) {
+      document.querySelectorAll('.custom-dropdown.open').forEach(function(dd) {
+        dd.classList.remove('open');
+      });
+    }
+  });
+
+  function filterDropdownItems(container, query) {
+    var q = query.toLowerCase().trim();
+    container.querySelectorAll('.dropdown-item-custom').forEach(function(item) {
+      if (item.classList.contains('is-header')) {
+        // Toujours afficher les headers
+        item.classList.remove('d-none');
+        return;
+      }
+      var value = (item.getAttribute('data-value') || '').toLowerCase();
+      if (q === '' || value.includes(q)) {
+        item.classList.remove('d-none');
+      } else {
+        item.classList.add('d-none');
+      }
+    });
+  }
+
+  function updateDropdownDisplay(container) {
+    var mode = container.getAttribute('data-mode') || 'single';
+    var placeholder = container.getAttribute('data-placeholder') || 'Sélectionner...';
+    var selectedText = container.querySelector('.selected-text');
+    var selected = getDropdownValues(container);
+
+    if (selected.length === 0) {
+      selectedText.innerText = placeholder;
+      selectedText.classList.add('placeholder');
+    } else if (mode === 'single') {
+      selectedText.innerText = selected[0];
+      selectedText.classList.remove('placeholder');
+    } else {
+      selectedText.innerText = selected.length + ' sélectionné(s)';
+      selectedText.classList.remove('placeholder');
+    }
+
+    // Mettre à jour les tags (multi seulement)
+    if (mode === 'multi') {
+      var tagsContainer = container.querySelector('.selected-tags');
+      if (tagsContainer) {
+        tagsContainer.innerHTML = '';
+        selected.forEach(function(val) {
+          var tag = document.createElement('span');
+          tag.className = 'tag';
+          tag.innerHTML = val + ' <span class="tag-remove" data-val="' + val + '">&times;</span>';
+          tagsContainer.appendChild(tag);
+        });
+        // Listener sur les boutons de suppression de tag
+        tagsContainer.querySelectorAll('.tag-remove').forEach(function(btn) {
+          btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var valToRemove = this.getAttribute('data-val');
+            container.querySelectorAll('.dropdown-item-custom input[type="checkbox"]').forEach(function(cb) {
+              if (cb.value === valToRemove) cb.checked = false;
+            });
+            updateDropdownDisplay(container);
+            // Trigger onchange
+            var onchangeFunc = container.getAttribute('data-onchange');
+            if (onchangeFunc && typeof window[onchangeFunc] === 'function') {
+              window[onchangeFunc]();
+            }
+          });
+        });
+      }
+    }
+  }
+
+  // Récupérer les valeurs sélectionnées d'un dropdown
+  function getDropdownValues(container) {
+    if (typeof container === 'string') container = document.getElementById(container);
+    if (!container) return [];
+    var vals = [];
+    container.querySelectorAll('.dropdown-item-custom input[type="checkbox"]:checked').forEach(function(cb) {
+      vals.push(cb.value);
+    });
+    return vals;
+  }
+
+  // Récupérer une seule valeur (pour les dropdowns mono)
+  function getDropdownValue(container) {
+    var vals = getDropdownValues(container);
+    return vals.length > 0 ? vals[0] : '';
+  }
+
+  // Setter : définir les valeurs sélectionnées
+  function setDropdownValues(container, values) {
+    if (typeof container === 'string') container = document.getElementById(container);
+    if (!container) return;
+    if (!Array.isArray(values)) values = values ? [values] : [];
+    
+    container.querySelectorAll('.dropdown-item-custom input[type="checkbox"]').forEach(function(cb) {
+      cb.checked = values.includes(cb.value);
+    });
+    updateDropdownDisplay(container);
+  }
+
+  // Reset : tout décocher
+  function resetDropdown(container) {
+    if (typeof container === 'string') container = document.getElementById(container);
+    if (!container) return;
+    container.querySelectorAll('.dropdown-item-custom input[type="checkbox"]').forEach(function(cb) {
+      cb.checked = false;
+    });
+    updateDropdownDisplay(container);
+  }
+
+  // Reset tous les dropdowns d'un formulaire/container
+  function resetAllDropdownsIn(parentSelector) {
+    var parent = document.querySelector(parentSelector);
+    if (!parent) return;
+    parent.querySelectorAll('.custom-dropdown').forEach(function(dd) {
+      resetDropdown(dd);
+    });
+  }
+
+  // ============================================================================
+  //                         DASHBOARD (U3, U7) — CARTES RAPPELS COMPLETES
+  // ============================================================================
+
+  function loadDashboard() {
+    var c = document.getElementById('dash-rappels-list');
+    c.innerHTML = '<div class="text-center py-3"><div class="spinner-border text-primary spinner-border-sm"></div></div>';
+
+    google.script.run.withSuccessHandler(function(r) {
+      c.innerHTML = "";
+      GLOBAL_RAPPELS = r;
+      
+      // U7 : Compter les rappels en retard et mettre à jour le badge sidebar
+      var lateCount = 0;
+      r.forEach(function(item) { if (item.isLate) lateCount++; });
+      updateSidebarBadge(lateCount);
+      
+      if (r.length === 0) {
+        c.innerHTML = '<div class="text-muted small text-center">Aucun rappel urgent.</div>';
+        return;
+      }
+      // MODIFIÉ : Cartes rappels complètes avec tous les boutons (fiche, commentaire, modifier, clôturer)
+      r.slice(0, 10).forEach(function(item) {
+        var lateClass = item.isLate ? 'late' : '';
+        var safeDetails = String(item.details || "").replace(/'/g, "\\'");
+        var typeRappelBadge = item.typeRappel ? '<span class="badge bg-info text-white ms-1" style="font-size:0.6em">' + item.typeRappel + '</span>' : '';
+
+        c.innerHTML += '<div class="card p-3 mb-2 rappel-item ' + lateClass + '">' +
+          '<div class="d-flex justify-content-between align-items-start">' +
+          '<div style="flex:1; min-width:0;">' +
+          '<h6 class="fw-bold mb-1" style="font-size:0.88rem;">' + item.titre + ' ' + typeRappelBadge + '</h6>' +
+          '<div class="small text-danger fw-bold mb-1"><i class="far fa-clock me-1"></i>' + item.date + '</div>' +
+          '<p class="mb-1 text-muted small text-truncate">' + safeDetails + '</p>' +
+          '<div>' +
+          '<span class="badge bg-light text-dark border" style="font-size:0.65em;"><i class="fas fa-user me-1"></i>' + item.nomJeune + '</span>' +
+          '<button class="btn btn-sm btn-outline-primary ms-1 btn-voir-fiche" style="font-size:0.65rem; padding:1px 6px;" onclick="ouvrirFicheDepuisRappel(\'' + item.idJeune + '\')">' +
+          '<i class="fas fa-external-link-alt me-1"></i>Fiche</button>' +
+          '</div>' +
+          '</div>' +
+          '<div class="d-flex gap-1 ms-2 flex-shrink-0">' +
+          '<button class="btn btn-outline-info btn-sm rounded-circle" style="width:28px;height:28px;padding:0;font-size:0.7rem;" title="Commentaire" onclick="openAddCommentModal(\'' + item.idRappel + '\')">' +
+          '<i class="fas fa-comment"></i></button>' +
+          '<button class="btn btn-outline-secondary btn-sm rounded-circle" style="width:28px;height:28px;padding:0;font-size:0.7rem;" title="Modifier" onclick="openUpdateRappel(\'' + item.idRappel + '\')">' +
+          '<i class="fas fa-pen"></i></button>' +
+          '<button class="btn btn-outline-success btn-sm rounded-circle" style="width:28px;height:28px;padding:0;font-size:0.7rem;" title="Clôturer" onclick="openCloseRappel(\'' + item.idRappel + '\')">' +
+          '<i class="fas fa-check"></i></button>' +
+          '</div>' +
+          '</div></div>';
+      });
+    }).getRappels();
+
+    // U4 : Charger les rappels en retard par jeune pour indicateurs visuels
+    google.script.run.withSuccessHandler(function(map) {
+      RAPPELS_RETARD_MAP = map || {};
+    }).getRappelsEnRetardParJeune();
+
+    // Stats du mois en cours
+    var now = new Date();
+    var startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().substring(0, 10);
+    var todayStr = now.toISOString().substring(0, 10);
+    google.script.run.withSuccessHandler(function(stats) {
+      document.getElementById('dash-nouveaux').innerText = stats.nouveaux;
+      document.getElementById('dash-actifs').innerText = stats.total_actifs;
+      document.getElementById('dash-demandes').innerText = stats.referencements_instit;
+      document.getElementById('dash-evictions').innerText = stats.evictions;
+    }).getStatistics(startOfMonth, todayStr);
+  }
+
+  // U7 : Mettre à jour le badge compteur dans la sidebar
+  function updateSidebarBadge(count) {
+    var badge = document.getElementById('sidebar-rappel-badge');
+    if (count > 0) {
+      badge.innerText = count;
+      badge.classList.remove('d-none');
+    } else {
+      badge.classList.add('d-none');
+    }
+  }
+
+  // ============================================================================
+  //              RECHERCHE & FILTRES (U2, C11, C12, M5, U9)
+  // ============================================================================
+
+  // U2 : Debounce sur la saisie de recherche
+  document.addEventListener('DOMContentLoaded', function() {
+    var searchInput = document.getElementById('search-input');
+    if (searchInput) {
+      searchInput.addEventListener('input', function() {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(function() {
+          lancerRecherche();
+        }, 300);
+      });
+      searchInput.addEventListener('keyup', function(e) {
+        if (e.key === 'Enter') {
+          clearTimeout(searchDebounceTimer);
+          lancerRecherche();
+        }
+      });
+    }
+  });
+
+  function lancerRecherche() {
+    var q = document.getElementById('search-input').value;
+    var filters = getActiveFilters();
+    var c = document.getElementById('search-results-container');
+    c.innerHTML = '<div class="text-center w-100 py-4"><div class="spinner-border text-primary"></div></div>';
+
+    google.script.run.withSuccessHandler(function(r) {
+      CURRENT_SEARCH_RESULTS = r;
+      renderSearchResults(r);
+    }).searchJeunesAdvanced(q, filters);
+  }
+
+  // C12 : Afficher tous les jeunes actifs
+  function afficherTousActifs() {
+    var filters = getActiveFilters();
+    filters.showAllActifs = true;
+    var c = document.getElementById('search-results-container');
+    c.innerHTML = '<div class="text-center w-100 py-4"><div class="spinner-border text-primary"></div></div>';
+
+    google.script.run.withSuccessHandler(function(r) {
+      CURRENT_SEARCH_RESULTS = r;
+      renderSearchResults(r);
+    }).searchJeunesAdvanced("", filters);
+  }
+
+  // M5 : Afficher TOUS les jeunes (aucun filtre de présence)
+  function afficherTousJeunes() {
+    var filters = getActiveFilters();
+    filters.showAll = true;
+    var c = document.getElementById('search-results-container');
+    c.innerHTML = '<div class="text-center w-100 py-4"><div class="spinner-border text-primary"></div></div>';
+
+    google.script.run.withSuccessHandler(function(r) {
+      CURRENT_SEARCH_RESULTS = r;
+      renderSearchResults(r);
+    }).searchJeunesAdvanced("", filters);
+  }
+
+  // C11 : Récupérer les filtres actifs (depuis custom dropdowns)
+  function getActiveFilters() {
+    return {
+      statutPresence: getDropdownValue('filter-presence'),
+      statutMab: getDropdownValue('filter-mab'),
+      vulnerabilite: getDropdownValue('filter-vuln'),
+      lieuVie: getDropdownValue('filter-lieu'),
+      showAllActifs: false,
+      showAll: false
+    };
+  }
+
+  // C11 : Reset des filtres
+  function resetFilters() {
+    resetDropdown('filter-presence');
+    resetDropdown('filter-mab');
+    resetDropdown('filter-vuln');
+    resetDropdown('filter-lieu');
+  }
+
+  // U9 : Tri des résultats
+  function trierResultats() {
+    var sortKey = document.getElementById('sort-select').value;
+    var sorted = CURRENT_SEARCH_RESULTS.slice(); // Copie
+
+    sorted.sort(function(a, b) {
+      switch(sortKey) {
+        case 'nom-asc': return (a.nom || '').localeCompare(b.nom || '');
+        case 'nom-desc': return (b.nom || '').localeCompare(a.nom || '');
+        case 'age-asc': return (parseInt(a.age) || 99) - (parseInt(b.age) || 99);
+        case 'age-desc': return (parseInt(b.age) || 0) - (parseInt(a.age) || 0);
+        case 'lieu-asc': return (a.lieu || '').localeCompare(b.lieu || '');
+        case 'date-desc': return 0; // Ordre par défaut du serveur
+        case 'date-asc': return 0;
+        default: return 0;
+      }
+    });
+    renderSearchResults(sorted);
+  }
+
+  // MODIFIÉ : Rendu des résultats avec emojis au lieu des couleurs conditionnelles
+  function renderSearchResults(r) {
+    var c = document.getElementById('search-results-container');
+    var sortBar = document.getElementById('sort-bar');
+    c.innerHTML = "";
+
+    if (r.length === 0) {
+      sortBar.classList.add('d-none');
+      c.innerHTML = '<div class="col-12 text-center text-muted">Aucun résultat.</div>';
+      return;
+    }
+
+    // U9 : Afficher la barre de tri
+    sortBar.classList.remove('d-none');
+    document.getElementById('result-count').innerText = r.length + ' résultat(s)';
+
+    r.forEach(function(j) {
+      var badgeHist = j.is_history ? '<span class="badge bg-warning text-dark ms-2">Ancien Détenteur</span>' : '';
+
+      // MODIFIÉ : Emojis au lieu des classes couleur
+      var emojiHtml = '<div class="card-emoji-indicators">';
+      if (j.is_grouped) {
+        emojiHtml += '<span class="emoji-tag" title="En groupe">👥</span>';
+      }
+      var genreLower = String(j.genre || '').toLowerCase();
+      if (genreLower === 'f' || genreLower === 'feminin' || genreLower === 'fille') {
+        emojiHtml += '<span class="emoji-tag" title="Fille">♀︎</span>';
+      } else if (genreLower === 'm' || genreLower === 'masculin' || genreLower === 'garçon' || genreLower === 'garcon') {
+        emojiHtml += '<span class="emoji-tag" title="Garçon">♂︎</span>';
+      }
+      emojiHtml += '</div>';
+
+      var labelsHtml = "";
+      if (j.labels) {
+        j.labels.split(',').forEach(function(l) {
+          if (l.trim()) {
+            labelsHtml += '<span class="badge rounded-pill text-bg-info text-white me-1" style="font-size:0.6em">' + l.trim() + '</span>';
+          }
+        });
+      }
+
+      // U4 : Indicateurs visuels
+      var indicatorsHtml = '<div class="card-indicators">';
+      var vulns = String(j.vulns || '').toLowerCase();
+      if (vulns.includes('emprise') || vulns.includes('enceinte') || vulns.includes('suicidaire') || vulns.includes('grave')) {
+        indicatorsHtml += '<span class="indicator-dot vuln-critical"><i class="fas fa-exclamation-triangle"></i> Critique</span>';
+      }
+      if (RAPPELS_RETARD_MAP[j.id]) {
+        indicatorsHtml += '<span class="indicator-dot rappel-late"><i class="fas fa-clock"></i> Rappel</span>';
+      }
+      if (vulns.includes('santé') || vulns.includes('blessure') || vulns.includes('hospitalisation')) {
+        indicatorsHtml += '<span class="indicator-dot sante-urgence"><i class="fas fa-heartbeat"></i> Santé</span>';
+      }
+
+      // Afficher les vulnérabilités sous forme de badges sur la carte
+      if (j.vulns) {
+        j.vulns.split(',').forEach(function(v) {
+          var vt = v.trim();
+          if (vt) {
+            indicatorsHtml += '<span class="vuln-badge" style="font-size:0.6em; padding:2px 5px;">' + vt + '</span>';
+          }
+        });
+      }
+
+      indicatorsHtml += '</div>';
+
+      var checked = selectedIds.has(j.id) ? 'checked' : '';
+
+      // MODIFIÉ : Plus de classes status-group/status-solo/is-girl
+      c.innerHTML += '<div class="col-md-4">' +
+        '<div class="card jeune-card h-100 p-3 position-relative">' +
+        '<div class="position-absolute top-0 end-0 p-3">' +
+        '<input type="checkbox" class="form-check-input select-jeune" ' + checked + ' onchange="toggleSelect(\'' + j.id + '\')">' +
+        '</div>' +
+        '<div onclick="ouvrirFiche(\'' + j.id + '\', \'suivi\')">' +
+        emojiHtml +
+        '<h5 class="fw-bold text-dark mb-1 pe-4">' + j.nom + ' ' + badgeHist + '</h5>' +
+        '<p class="text-muted small mb-2">' + (j.surnom || '') + '</p>' +
+        '<div class="mb-2"><i class="fas fa-phone-alt text-primary small me-2"></i>' + j.tel + '</div>' +
+        '<div class="small text-muted">' + (j.age || '?') + ' ans | ' + (j.nationalite || 'Inconnue') + '</div>' +
+        '<div class="mt-2">' + labelsHtml + '</div>' +
+        '<div class="mt-2">' +
+        '<span class="badge bg-light text-dark border">' + (j.statut_mab || '') + '</span> ' +
+        '<span class="badge bg-light text-dark border">' + (j.lieu || '') + '</span>' +
+        '</div>' +
+        indicatorsHtml +
+        '</div>' +
+        '</div>' +
+        '</div>';
+    });
+  }
+
+  // ============================================================================
+  //                    SELECTION & BARRE FLOTTANTE
+  // ============================================================================
+
+  function toggleSelect(id) {
+    if (selectedIds.has(id)) {
+      selectedIds.delete(id);
+    } else {
+      selectedIds.add(id);
+    }
+    updateFloatingBar();
+  }
+
+  function updateFloatingBar() {
+    var bar = document.getElementById('floating-bar');
+    document.getElementById('count-selected').innerText = selectedIds.size;
+    if (selectedIds.size > 0) {
+      bar.style.display = 'flex';
+    } else {
+      bar.style.display = 'none';
+    }
+  }
+
+  function clearSelection() {
+    selectedIds.clear();
+    document.querySelectorAll('.select-jeune').forEach(function(cb) {
+      cb.checked = false;
+    });
+    updateFloatingBar();
+  }
+
+  function openMassEventModal() {
+    if (selectedIds.size === 0) return;
+    // S'assurer que les dropdowns de la modale sont construits
+    ensureModalDropdowns('modalAddEvent');
+
+    isMassAction = true;
+    document.getElementById('modal-event-title').innerText = "Masse (" + selectedIds.size + ")";
+    document.getElementById('event-date').valueAsDate = new Date();
+    resetDropdown('event-type');
+    resetEventFormFields();
+    updateFormFields();
+    modalEventInstance.show();
+  }
+
+  // ============================================================================
+  //           C6 : EVICTION RAPIDE PAR LIEU DE VIE
+  // ============================================================================
+
+  function openEvictionModal() {
+    // S'assurer que les dropdowns de la modale éviction sont construits
+    ensureModalDropdowns('modalEviction');
+
+    resetDropdown('eviction-lieu');
+    document.getElementById('eviction-preview').classList.add('d-none');
+    document.getElementById('eviction-list').innerHTML = "";
+    document.getElementById('btn-confirm-eviction').disabled = true;
+    modalEvictionInstance.show();
+  }
+
+  // Callback onchange du dropdown éviction
+  function onEvictionLieuChange() {
+    var lieu = getDropdownValue('eviction-lieu');
+    if (!lieu) {
+      document.getElementById('eviction-preview').classList.add('d-none');
+      document.getElementById('btn-confirm-eviction').disabled = true;
+      return;
+    }
+    document.getElementById('eviction-list').innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm text-primary"></div></div>';
+    document.getElementById('eviction-preview').classList.remove('d-none');
+
+    google.script.run.withSuccessHandler(function(jeunes) {
+      var listContainer = document.getElementById('eviction-list');
+      listContainer.innerHTML = "";
+      document.getElementById('eviction-count').innerText = jeunes.length;
+
+      if (jeunes.length === 0) {
+        listContainer.innerHTML = '<div class="text-muted small text-center">Aucun jeune actif sur ce lieu.</div>';
+        document.getElementById('btn-confirm-eviction').disabled = true;
+        return;
+      }
+
+      window._evictionJeunes = jeunes;
+
+      jeunes.forEach(function(j) {
+        listContainer.innerHTML += '<div class="d-flex justify-content-between align-items-center p-2 border-bottom">' +
+          '<div><strong>' + j.nom + '</strong> <small class="text-muted">(' + (j.age || '?') + ' ans)</small></div>' +
+          '<small class="text-muted">' + (j.tel || '') + '</small>' +
+          '</div>';
+      });
+
+      document.getElementById('btn-confirm-eviction').disabled = false;
+    }).getJeunesByLieuVie(lieu);
+  }
+
+  function confirmEviction() {
+    if (!window._evictionJeunes || window._evictionJeunes.length === 0) return;
+
+    clearSelection();
+    window._evictionJeunes.forEach(function(j) {
+      selectedIds.add(j.id);
+    });
+    updateFloatingBar();
+
+    modalEvictionInstance.hide();
+
+    // S'assurer que les dropdowns de la modale événement sont construits
+    ensureModalDropdowns('modalAddEvent');
+
+    isMassAction = true;
+    document.getElementById('modal-event-title').innerText = "Éviction (" + selectedIds.size + " jeunes)";
+    document.getElementById('event-date').valueAsDate = new Date();
+
+    // Pré-remplir le type sur Éviction
+    var items = CONFIG['TYPES_EVENEMENTS'] || [];
+    for (var i = 0; i < items.length; i++) {
+      var itemLower = String(items[i]).toLowerCase();
+      if (itemLower.includes('éviction') || itemLower.includes('eviction')) {
+        setDropdownValues('event-type', [items[i]]);
+        break;
+      }
+    }
+    updateFormFields();
+    modalEventInstance.show();
+  }
+
+  // ============================================================================
+  //                    VERIFICATION DOUBLONS
+  // ============================================================================
+
+  function verifierDoublon(tel) {
+    if (document.getElementById('current-group-id').value !== "") return;
+    if (tel.length < 4) return;
+    google.script.run.withSuccessHandler(function(d) {
+      document.getElementById('alert-doublon').innerHTML = d.length > 0 ? "⚠️ DÉJÀ EXISTANT" : "";
+    }).checkDoublonTel(tel);
+  }
+
+  // ============================================================================
+  //              ENREGISTREMENT NOUVEAU JEUNE (M2, M3, M4) + LIAISON GROUPE
+  // ============================================================================
+
+  function soumettreNouveauJeune(mode, isLoop, goToFiche) {
+    try {
+      var tel = document.getElementById('new-tel').value;
+      var nom = document.getElementById('new-nom').value;
+      if (!tel || !nom) {
+        alert("Téléphone et Nom obligatoires");
+        return;
+      }
+
+      var vs = getDropdownValues('new-vulns');
+      var labels = getDropdownValues('new-labels');
+
+      var notesElem = document.getElementById('new-notes-fixes');
+      var notesVal = notesElem ? notesElem.value : "";
+
+      var form = {
+        tel: tel,
+        nom: nom,
+        surnom: document.getElementById('new-surnom').value,
+        age: document.getElementById('new-age').value,
+        genre: getDropdownValue('new-genre'),
+        nationalite: getDropdownValue('new-nationalite'),
+        langue: getDropdownValues('new-langue'),
+        dateRencontre: document.getElementById('new-date-rencontre').value,
+        lieuVie: getDropdownValue('new-lieuvie'),
+        lieuEvent: "",
+        details: document.getElementById('new-details').value,
+        vulnerabilites: vs,
+        forceGroupId: document.getElementById('current-group-id').value || null,
+        typeContact: getDropdownValues('new-type-contact'),
+        notesFixes: notesVal,
+        labelsAutres: labels,
+        // NOUVEAU : ID groupe lié via recherche (sans tel partagé)
+        linkedGroupId: document.getElementById('linked-group-id').value || null
+      };
+
+      if (mode) modalConflitInstance.hide();
+      document.getElementById('loader').style.display = 'block';
+
+      google.script.run.withSuccessHandler(function(res) {
+        document.getElementById('loader').style.display = 'none';
+        if (res.status === 'CONFLICT') {
+          document.getElementById('conflit-noms').innerText = res.doublons[0].nom;
+          modalConflitInstance.show();
+        } else if (res.success) {
+          // NOUVEAU : Si liaison groupe via recherche, lier après création
+          var linkedGrpId = document.getElementById('linked-group-id').value;
+          if (linkedGrpId && GROUP_LINK_SELECTED.length > 0 && res.id) {
+            var targetIds = GROUP_LINK_SELECTED.map(function(s) { return s.id; });
+            google.script.run.withSuccessHandler(function(linkRes) {
+              // Liaison effectuée silencieusement
+              GROUP_LINK_SELECTED = [];
+              document.getElementById('linked-group-id').value = '';
+            }).linkJeunesToGroup(res.id, targetIds);
+          }
+
+          // M2 : goToFiche = true → ouvrir la fiche du jeune créé
+          if (goToFiche) {
+            var newId = res.id;
+            resetFormCreation();
+            navigate('suivi');
+            setTimeout(function() { ouvrirFiche(newId, 'suivi'); }, 600);
+          } 
+          // M3 : isLoop = true → conserver le tel et le groupId, vider le reste
+          else if (isLoop) {
+            var keepTel = tel;
+            var keepGroupId = res.groupId;
+            resetFormCreation();
+            document.getElementById('new-tel').value = keepTel;
+            document.getElementById('current-group-id').value = keepGroupId;
+            alert("Enregistré. Ajoutez le jeune suivant du groupe.");
+          } 
+          else {
+            alert(res.message);
+            resetFormCreation();
+          }
+        }
+      }).withFailureHandler(function(e) {
+        document.getElementById('loader').style.display = 'none';
+        alert("Erreur serveur : " + e.message);
+      }).saveJeuneSmart(form, CURRENT_USER.email, mode);
+    } catch (e) {
+      alert("Erreur client : " + e.message);
+    }
+  }
+
+  // M4 : Reset complet du formulaire de création
+  function resetFormCreation() {
+    document.getElementById('new-tel').value = '';
+    document.getElementById('new-nom').value = '';
+    document.getElementById('new-surnom').value = '';
+    document.getElementById('new-age').value = '';
+    document.getElementById('new-details').value = '';
+    document.getElementById('new-notes-fixes').value = '';
+    document.getElementById('current-group-id').value = '';
+    document.getElementById('linked-group-id').value = '';
+    document.getElementById('alert-doublon').innerHTML = '';
+    document.getElementById('new-date-rencontre').valueAsDate = new Date();
+    // Reset liaison groupe
+    document.getElementById('new-link-group-check').checked = false;
+    document.getElementById('new-link-group-section').classList.add('d-none');
+    document.getElementById('new-link-group-selected').innerHTML = '';
+    GROUP_LINK_SELECTED = [];
+    // Reset tous les custom dropdowns du formulaire
+    resetAllDropdownsIn('#form-creation');
+  }
+
+  function resoudreConflit(c) {
+    soumettreNouveauJeune(c, false, false);
+  }
+
+  // NOUVEAU : Toggle section liaison groupe dans le formulaire d'enregistrement
+  function toggleLinkGroupSection() {
+    var checked = document.getElementById('new-link-group-check').checked;
+    var section = document.getElementById('new-link-group-section');
+    if (checked) {
+      section.classList.remove('d-none');
+    } else {
+      section.classList.add('d-none');
+      document.getElementById('linked-group-id').value = '';
+      document.getElementById('new-link-group-selected').innerHTML = '';
+      GROUP_LINK_SELECTED = [];
+    }
+  }
+
+  // ============================================================================
+  //              U6 : FIL D'ARIANE (BREADCRUMB) DANS LA FICHE
+  // ============================================================================
+
+  function setBreadcrumb(origin) {
+    FICHE_ORIGIN = origin;
+    var breadcrumb = document.getElementById('breadcrumb-back');
+    var breadcrumbText = document.getElementById('breadcrumb-text');
+
+    if (origin === 'suivi') {
+      breadcrumbText.innerText = 'Retour à la recherche';
+      breadcrumb.classList.remove('d-none');
+    } else if (origin === 'rappels') {
+      breadcrumbText.innerText = 'Retour aux rappels';
+      breadcrumb.classList.remove('d-none');
+    } else if (origin === 'dashboard') {
+      breadcrumbText.innerText = 'Retour au tableau de bord';
+      breadcrumb.classList.remove('d-none');
+    } else {
+      breadcrumb.classList.add('d-none');
+    }
+  }
+
+  function breadcrumbGoBack() {
+    modalFicheInstance.hide();
+    if (FICHE_ORIGIN) {
+      navigate(FICHE_ORIGIN);
+    }
+  }
+  // ============================================================================
+  //                    FICHE JEUNE (OUVRIR & AFFICHER)
+  // ============================================================================
+
+  // U6 : origin = d'où on vient ('suivi', 'rappels', 'dashboard')
+  function ouvrirFiche(id, origin) {
+    setBreadcrumb(origin || null);
+    document.getElementById('loader').style.display = 'block';
+    google.script.run.withSuccessHandler(function(r) {
+      document.getElementById('loader').style.display = 'none';
+      currentJeuneData = r.jeune;
+      CURRENT_HISTORY = r.history;
+
+      var j = r.jeune;
+      document.getElementById('fiche-nom').innerText = j.nom;
+      document.getElementById('fiche-surnom').innerText = j.surnom || "";
+      document.getElementById('fiche-tel').innerText = j.tel;
+      document.getElementById('fiche-age').innerText = j.age ? j.age + " ans" : "";
+      document.getElementById('fiche-nat').innerText = j.nationalite;
+      document.getElementById('fiche-lieu').innerText = j.lieu_vie;
+
+      // C9 / C10 : Dates
+      document.getElementById('fiche-date-contact').innerText = j.date_contact || "N/A";
+      document.getElementById('fiche-date-rencontre').innerText = j.date_rencontre || "N/A";
+      document.getElementById('fiche-date-distrib').innerText = j.date_distrib || "N/A";
+
+      document.getElementById('fiche-statut-mab-full').innerText = "MAB : " + j.statut_mab;
+      document.getElementById('fiche-statut-presence-full').innerText = "Présence : " + j.statut_presence;
+
+      var btnGrp = document.getElementById('btn-see-group');
+      if (j.has_group) {
+        btnGrp.classList.remove('d-none');
+      } else {
+        btnGrp.classList.add('d-none');
+      }
+
+      var noteElem = document.getElementById('fiche-notes-fixes');
+      if (j.notes_fixes) {
+        noteElem.parentElement.classList.remove('d-none');
+        noteElem.innerText = j.notes_fixes;
+      } else {
+        noteElem.parentElement.classList.add('d-none');
+      }
+
+      var vc = document.getElementById('fiche-vulns');
+      vc.innerHTML = "";
+      if (j.vulnerabilites) {
+        j.vulnerabilites.split(',').forEach(function(v) {
+          if (v.trim()) {
+            vc.innerHTML += '<span class="vuln-badge">' + v.trim() + '</span>';
+          }
+        });
+      }
+
+      var lc = document.getElementById('fiche-labels');
+      lc.innerHTML = "";
+      if (j.labels_autres) {
+        j.labels_autres.split(',').forEach(function(l) {
+          if (l.trim()) {
+            lc.innerHTML += '<span class="label-badge">' + l.trim() + '</span>';
+          }
+        });
+      }
+
+      renderTimeline();
+      modalFicheInstance.show();
+    }).getFicheJeune(id);
+  }
+
+  // ============================================================================
+  //                         TIMELINE (HISTORIQUE)
+  // ============================================================================
+
+  function renderTimeline() {
+    var t = document.getElementById('fiche-timeline');
+    t.innerHTML = "";
+    var showTech = document.getElementById('show-tech-history').checked;
+
+    CURRENT_HISTORY.forEach(function(e) {
+      if (!showTech && e.type === "Modification") return;
+
+      var editBtn = "";
+      if (e.type !== "Modification" && e.idEvent) {
+        editBtn = '<button class="btn btn-sm btn-link text-muted p-0 ms-2" onclick="openEditEvent(\'' + e.idEvent + '\')">' +
+          '<i class="fas fa-pencil-alt"></i>' +
+          '</button>';
+      }
+
+      t.innerHTML += '<div class="timeline-item">' +
+        '<div class="d-flex justify-content-between">' +
+        '<div><strong>' + e.type + '</strong> ' + editBtn + '</div>' +
+        '<small class="text-muted">' + e.date + '</small>' +
+        '</div>' +
+        '<div class="small text-muted">' + (e.details || '') + '</div>' +
+        '<div class="small fst-italic text-end" style="font-size:0.75em">Par ' + (e.auteur || '?') + '</div>' +
+        '</div>';
+    });
+  }
+
+  // ============================================================================
+  //                    MODIFIER UN EVENEMENT
+  // ============================================================================
+
+  function openEditEvent(idEvent) {
+    // S'assurer que les dropdowns de la modale sont construits
+    ensureModalDropdowns('modalEditEvent');
+
+    document.getElementById('loader').style.display = 'block';
+    google.script.run.withSuccessHandler(function(evt) {
+      document.getElementById('loader').style.display = 'none';
+      if (!evt) return;
+      document.getElementById('edit-event-id').value = evt.id;
+      try {
+        document.getElementById('edit-event-date').value = new Date(evt.dateRaw).toISOString().substring(0, 10);
+      } catch (e) { }
+      setDropdownValues('edit-event-type', [evt.type]);
+      document.getElementById('edit-event-details').value = evt.details;
+      modalEditEventInstance.show();
+    }).getEventData(idEvent);
+  }
+
+  function closeEditEventModal() {
+    modalEditEventInstance.hide();
+  }
+
+  function saveEditedEvent() {
+    var form = {
+      idEvent: document.getElementById('edit-event-id').value,
+      date: document.getElementById('edit-event-date').value,
+      type: getDropdownValue('edit-event-type'),
+      details: document.getElementById('edit-event-details').value
+    };
+    document.getElementById('loader').style.display = 'block';
+    modalEditEventInstance.hide();
+    google.script.run.withSuccessHandler(function(res) {
+      if (res.success) {
+        ouvrirFiche(currentJeuneData.id);
+      } else {
+        document.getElementById('loader').style.display = 'none';
+        alert(res.message);
+      }
+    }).saveEditedEvent(form, CURRENT_USER.email);
+  }
+
+  // ============================================================================
+  //                    GROUPE (MEMBRES)
+  // ============================================================================
+
+  function showGroupMembers() {
+    if (!currentJeuneData) return;
+    document.getElementById('group-members-list').innerHTML = '<div class="spinner-border text-primary"></div>';
+    modalGroupInstance.show();
+    google.script.run.withSuccessHandler(function(members) {
+      var container = document.getElementById('group-members-list');
+      container.innerHTML = "";
+      if (members.length === 0) {
+        container.innerHTML = "Aucun autre membre trouvé.";
+        return;
+      }
+      members.forEach(function(m) {
+        container.innerHTML += '<div class="d-flex justify-content-between align-items-center p-2 border-bottom">' +
+          '<div><strong>' + m.nom + '</strong> <small class="text-muted">(' + m.age + ' ans)</small></div>' +
+          '<button class="btn btn-sm btn-outline-primary" onclick="modalGroupInstance.hide(); ouvrirFiche(\'' + m.id + '\')">Voir</button>' +
+          '</div>';
+      });
+    }).getGroupMembers(currentJeuneData.id_groupe, currentJeuneData.id);
+  }
+
+  // ============================================================================
+  //                    MODIFIER PROFIL (M6 : custom dropdowns)
+  // ============================================================================
+
+  function openEditProfile() {
+    if (!currentJeuneData) return;
+    // S'assurer que les dropdowns de la modale sont construits
+    ensureModalDropdowns('modalEditProfile');
+
+    document.getElementById('edit-nom').value = currentJeuneData.nom;
+    document.getElementById('edit-surnom').value = currentJeuneData.surnom;
+    document.getElementById('edit-tel').value = String(currentJeuneData.tel).replace(/'/g, '');
+    document.getElementById('edit-age').value = currentJeuneData.age;
+    
+    setDropdownValues('edit-lieu', [currentJeuneData.lieu_vie]);
+    setDropdownValues('edit-statut-mab', [currentJeuneData.statut_mab]);
+    setDropdownValues('edit-statut-pres', [currentJeuneData.statut_presence]);
+    
+    document.getElementById('edit-notes-fixes').value = currentJeuneData.notes_fixes || "";
+
+    // Labels
+    if (currentJeuneData.labels_autres) {
+      var arr = currentJeuneData.labels_autres.split(',').map(function(s) { return s.trim(); });
+      setDropdownValues('edit-labels', arr);
+    } else {
+      resetDropdown('edit-labels');
+    }
+    
+    modalEditInstance.show();
+  }
+
+  function saveEditProfile() {
+    var form = {
+      id: currentJeuneData.id,
+      nom: document.getElementById('edit-nom').value,
+      surnom: document.getElementById('edit-surnom').value,
+      tel: document.getElementById('edit-tel').value,
+      age: document.getElementById('edit-age').value,
+      lieu: getDropdownValue('edit-lieu'),
+      statutMab: getDropdownValue('edit-statut-mab'),
+      statutPres: getDropdownValue('edit-statut-pres'),
+      notesFixes: document.getElementById('edit-notes-fixes').value,
+      labelsAutres: getDropdownValues('edit-labels')
+    };
+    document.getElementById('loader').style.display = 'block';
+    modalEditInstance.hide();
+    google.script.run.withSuccessHandler(function(res) {
+      if (res.success) {
+        ouvrirFiche(currentJeuneData.id);
+      } else {
+        document.getElementById('loader').style.display = 'none';
+        alert(res.message);
+      }
+    }).updateJeuneProfile(form, CURRENT_USER.email);
+  }
+
+  // ============================================================================
+  //              FORMULAIRE EVENEMENT (SCENARIOS DYNAMIQUES)
+  // ============================================================================
+
+  function updateFormFields() {
+    var fieldIds = ['lieuvie', 'lieuevent', 'mab', 'presence', 'refus', 'vulns', 'contact', 'materiel', 'note'];
+    fieldIds.forEach(function(f) {
+      var el = document.getElementById('group-event-' + f);
+      if (el) el.classList.add('d-none');
+    });
+    var type = getDropdownValue('event-type');
+    var scenarios = CONFIG['SCENARIOS'];
+    if (type && scenarios && scenarios[type]) {
+      var rules = scenarios[type];
+      if (rules.showLieuVie) document.getElementById('group-event-lieuvie').classList.remove('d-none');
+      if (rules.showLieuEvent) document.getElementById('group-event-lieuevent').classList.remove('d-none');
+      if (rules.showPres) document.getElementById('group-event-presence').classList.remove('d-none');
+      if (rules.showMab) document.getElementById('group-event-mab').classList.remove('d-none');
+      if (rules.showRefus) document.getElementById('group-event-refus').classList.remove('d-none');
+      if (rules.showVuln) document.getElementById('group-event-vulns').classList.remove('d-none');
+      if (rules.showContact) document.getElementById('group-event-contact').classList.remove('d-none');
+      if (rules.showMat) document.getElementById('group-event-materiel').classList.remove('d-none');
+      if (rules.showNote) document.getElementById('group-event-note').classList.remove('d-none');
+    }
+  }
+
+  function openAddEventModal() {
+    // S'assurer que les dropdowns de la modale sont construits
+    ensureModalDropdowns('modalAddEvent');
+
+    isMassAction = false;
+    document.getElementById('modal-event-title').innerText = "Nouvel Événement";
+    document.getElementById('event-id-jeune').value = currentJeuneData.id;
+    document.getElementById('event-date').valueAsDate = new Date();
+    // M4 : Reset complet du formulaire événement
+    resetEventFormFields();
+    resetDropdown('event-type');
+    updateFormFields();
+    modalEventInstance.show();
+  }
+
+  function closeAddEventModal() {
+    modalEventInstance.hide();
+  }
+
+  // M4 : Reset de tous les champs du formulaire événement
+  function resetEventFormFields() {
+    resetDropdown('event-lieuevent');
+    resetDropdown('event-contact');
+    resetDropdown('event-lieuvie');
+    resetDropdown('event-statut-mab');
+    resetDropdown('event-statut-presence');
+    resetDropdown('event-motif-statut-mab');
+    resetDropdown('event-materiel');
+    resetDropdown('event-vulns');
+    var noteField = document.getElementById('event-note');
+    if (noteField) noteField.value = '';
+  }
+
+  function soumettreEvent() {
+    var type = getDropdownValue('event-type');
+    if (!type) { alert("Sélectionnez un type d'événement."); return; }
+    
+    var form = {
+      type: type,
+      date: document.getElementById('event-date').value,
+      lieuVie: getDropdownValue('event-lieuvie'),
+      lieuEvent: getDropdownValue('event-lieuevent'),
+      statutMab: getDropdownValue('event-statut-mab'),
+      statutPres: getDropdownValue('event-statut-presence'),
+      motifStatutMab: getDropdownValues('event-motif-statut-mab'),
+      materiel: getDropdownValues('event-materiel'),
+      typeContact: getDropdownValues('event-contact'),
+      vulns: getDropdownValues('event-vulns'),
+      note: document.getElementById('event-note').value
+    };
+    document.getElementById('loader').style.display = 'block';
+    modalEventInstance.hide();
+
+    if (isMassAction) {
+      form.ids = Array.from(selectedIds);
+      google.script.run.withSuccessHandler(function(res) {
+        document.getElementById('loader').style.display = 'none';
+        alert(res.message);
+        clearSelection();
+        lancerRecherche();
+      }).saveMassEvent(form, CURRENT_USER.email);
+    } else {
+      form.idJeune = currentJeuneData.id;
+      google.script.run.withSuccessHandler(function(res) {
+        if (res.success) {
+          ouvrirFiche(currentJeuneData.id);
+        } else {
+          document.getElementById('loader').style.display = 'none';
+          alert(res.message);
+        }
+      }).saveNewEvent(form, CURRENT_USER.email);
+    }
+  }
+
+  // ============================================================================
+  //              RAPPELS : CHARGEMENT 3 ONGLETS (En retard / À faire / Archivés)
+  // ============================================================================
+
+  function loadRappels() {
+    var cEnRetard = document.getElementById('rappels-enretard-container');
+    var cAFaire = document.getElementById('rappels-afaire-container');
+    var cArchives = document.getElementById('rappels-archives-container');
+    cEnRetard.innerHTML = '<div class="text-center w-100 py-4"><div class="spinner-border text-primary"></div></div>';
+    cAFaire.innerHTML = '';
+    cArchives.innerHTML = '';
+
+    google.script.run.withSuccessHandler(function(data) {
+      // data = { enRetard: [...], aFaire: [...], archives: [...] }
+      var enRetard = data.enRetard || [];
+      var aFaire = data.aFaire || [];
+      var archives = data.archives || [];
+
+      // Fusionner enRetard + aFaire pour le GLOBAL_RAPPELS (compatibilité dashboard)
+      GLOBAL_RAPPELS = enRetard.concat(aFaire);
+
+      // U7 : Badge sidebar = nombre en retard
+      updateSidebarBadge(enRetard.length);
+
+      // Badges compteurs onglets
+      document.getElementById('tab-enretard-count').innerText = enRetard.length;
+      document.getElementById('tab-afaire-count').innerText = aFaire.length;
+      document.getElementById('tab-archives-count').innerText = archives.length;
+
+      // Rendre chaque onglet
+      renderRappelsList(cEnRetard, enRetard, 'late');
+      renderRappelsList(cAFaire, aFaire, '');
+      renderRappelsList(cArchives, archives, 'archived');
+
+    }).withFailureHandler(function(err) {
+      cEnRetard.innerHTML = '<div class="alert alert-danger">Erreur chargement rappels: ' + err.message + '</div>';
+    }).getRappelsAll();
+  }
+
+  // Fonction de rendu partagée pour les 3 onglets de rappels
+  function renderRappelsList(container, items, extraClass) {
+    container.innerHTML = '';
+    if (items.length === 0) {
+      container.innerHTML = '<div class="col-12 text-center text-muted py-4">Aucun rappel dans cette catégorie.</div>';
+      return;
+    }
+    items.forEach(function(item) {
+      var itemClass = extraClass || (item.isLate ? 'late' : '');
+      var safeDetails = String(item.details || "").replace(/'/g, "\\'");
+      var typeRappelBadge = item.typeRappel ? '<span class="badge bg-info text-white ms-1" style="font-size:0.65em">' + item.typeRappel + '</span>' : '';
+      // Pour les archivés, afficher le statut
+      var statutBadge = '';
+      if (extraClass === 'archived' && item.statut) {
+        var badgeColor = item.statut === 'Fait' ? 'bg-success' : 'bg-secondary';
+        statutBadge = '<span class="badge ' + badgeColor + ' ms-1" style="font-size:0.65em">' + item.statut + '</span>';
+      }
+
+      var buttonsHtml = '';
+      if (extraClass !== 'archived') {
+        buttonsHtml = '<div class="d-flex gap-1">' +
+          '<button class="btn btn-outline-info btn-sm rounded-circle" title="Commentaire" onclick="openAddCommentModal(\'' + item.idRappel + '\')">' +
+          '<i class="fas fa-comment"></i></button>' +
+          '<button class="btn btn-outline-secondary btn-sm rounded-circle" title="Modifier" onclick="openUpdateRappel(\'' + item.idRappel + '\')">' +
+          '<i class="fas fa-pen"></i></button>' +
+          '<button class="btn btn-outline-success btn-sm rounded-circle" title="Clôturer" onclick="openCloseRappel(\'' + item.idRappel + '\')">' +
+          '<i class="fas fa-check"></i></button>' +
+          '</div>';
+      }
+
+      container.innerHTML += '<div class="col-md-6">' +
+        '<div class="card p-3 shadow-sm rappel-item ' + itemClass + '">' +
+        '<div class="d-flex justify-content-between align-items-start">' +
+        '<div>' +
+        '<h5 class="fw-bold mb-1">' + item.titre + ' ' + typeRappelBadge + ' ' + statutBadge + '</h5>' +
+        '<div class="small text-danger fw-bold mb-2"><i class="far fa-clock me-1"></i> ' + item.date + '</div>' +
+        '<p class="mb-1 text-muted small">' + safeDetails + '</p>' +
+        '<div class="mt-2">' +
+        '<span class="badge bg-light text-dark border"><i class="fas fa-user me-1"></i> ' + item.nomJeune + '</span>' +
+        '<span class="badge bg-light text-dark border ms-1"><i class="fas fa-phone me-1"></i> ' + item.telJeune + '</span>' +
+        '<button class="btn btn-sm btn-outline-primary ms-2 btn-voir-fiche" onclick="ouvrirFicheDepuisRappel(\'' + item.idJeune + '\')">' +
+        '<i class="fas fa-external-link-alt me-1"></i>Fiche</button>' +
+        '</div>' +
+        '</div>' +
+        buttonsHtml +
+        '</div>' +
+        '</div>' +
+        '</div>';
+    });
+  }
+
+  // C15 : Ouvrir fiche depuis un rappel
+  function ouvrirFicheDepuisRappel(idJeune) {
+    ouvrirFiche(idJeune, 'rappels');
+  }
+
+  // ============================================================================
+  //              RAPPELS : AJOUTER / MODIFIER / CLOTURER
+  // ============================================================================
+
+  function openAddReminderModal() {
+    // S'assurer que les dropdowns de la modale sont construits
+    ensureModalDropdowns('modalAddReminder');
+
+    document.getElementById('rappel-titre').value = "";
+    resetDropdown('rappel-type');
+    document.getElementById('rappel-date').valueAsDate = new Date();
+    document.getElementById('rappel-details').value = "";
+    modalReminderInstance.show();
+  }
+
+  function closeAddReminderModal() {
+    modalReminderInstance.hide();
+  }
+
+  // M7 : Inclure le typeRappel dans la soumission
+  function soumettreRappelManuel() {
+    if (!currentJeuneData) return;
+    var form = {
+      idJeune: currentJeuneData.id,
+      titre: document.getElementById('rappel-titre').value,
+      date: document.getElementById('rappel-date').value,
+      details: document.getElementById('rappel-details').value,
+      typeRappel: getDropdownValue('rappel-type')
+    };
+    if (!form.titre || !form.date) {
+      alert("Titre/Date obligatoires.");
+      return;
+    }
+    document.getElementById('loader').style.display = 'block';
+    modalReminderInstance.hide();
+    google.script.run.withSuccessHandler(function(res) {
+      document.getElementById('loader').style.display = 'none';
+      alert(res.message);
+    }).saveManualReminder(form);
+  }
+
+  function openUpdateRappel(id) {
+    var item = GLOBAL_RAPPELS.find(function(r) { return r.idRappel === id; });
+    if (!item) return;
+    document.getElementById('update-rappel-id').value = id;
+    try {
+      document.getElementById('update-rappel-date').value = new Date(item.dateRaw).toISOString().substring(0, 10);
+    } catch (e) { }
+    document.getElementById('update-rappel-details').value = item.details;
+    modalUpdateReminderInstance.show();
+  }
+
+  function soumettreUpdateRappel() {
+    var form = {
+      idRappel: document.getElementById('update-rappel-id').value,
+      date: document.getElementById('update-rappel-date').value,
+      details: document.getElementById('update-rappel-details').value
+    };
+    document.getElementById('loader').style.display = 'block';
+    modalUpdateReminderInstance.hide();
+    google.script.run.withSuccessHandler(function(res) {
+      if (res.success) loadRappels();
+      document.getElementById('loader').style.display = 'none';
+    }).updateRappel(form);
+  }
+
+  function openCloseRappel(id) {
+    document.getElementById('close-rappel-id').value = id;
+    modalCloseReminderInstance.show();
+  }
+
+  function soumettreCloseRappel(status) {
+    var id = document.getElementById('close-rappel-id').value;
+    document.getElementById('loader').style.display = 'block';
+    modalCloseReminderInstance.hide();
+    google.script.run.withSuccessHandler(function(res) {
+      if (res.success) {
+        loadRappels();
+        loadDashboard();
+      }
+      document.getElementById('loader').style.display = 'none';
+    }).closeRappel(id, CURRENT_USER.email, status);
+  }
+
+  // ============================================================================
+  //        C16 : NOUVEAU RAPPEL DEPUIS LA VUE RAPPELS (M7 inclus)
+  // ============================================================================
+
+  function openRappelFromViewModal() {
+    // S'assurer que les dropdowns de la modale sont construits
+    ensureModalDropdowns('modalRappelFromView');
+
+    document.getElementById('rappel-view-search').value = "";
+    document.getElementById('rappel-view-id-jeune').value = "";
+    document.getElementById('rappel-view-titre').value = "";
+    resetDropdown('rappel-view-type');
+    document.getElementById('rappel-view-date').valueAsDate = new Date();
+    document.getElementById('rappel-view-details').value = "";
+    document.getElementById('rappel-view-search-results').classList.add('d-none');
+    document.getElementById('rappel-view-search-results').innerHTML = "";
+    document.getElementById('rappel-view-selected').classList.add('d-none');
+    modalRappelFromViewInstance.show();
+  }
+
+  function searchJeuneForRappelView(query) {
+    var resultsContainer = document.getElementById('rappel-view-search-results');
+    if (!query || query.length < 2) {
+      resultsContainer.classList.add('d-none');
+      resultsContainer.innerHTML = "";
+      return;
+    }
+    google.script.run.withSuccessHandler(function(results) {
+      resultsContainer.innerHTML = "";
+      if (results.length === 0) {
+        resultsContainer.innerHTML = '<div class="p-2 text-muted small text-center">Aucun résultat</div>';
+        resultsContainer.classList.remove('d-none');
+        return;
+      }
+      results.forEach(function(j) {
+        resultsContainer.innerHTML += '<div class="search-result-item" onclick="selectJeuneForRappelView(\'' + j.id + '\', \'' + j.nom.replace(/'/g, "\\'") + '\')">' +
+          '<strong>' + j.nom + '</strong>' +
+          '<small class="text-muted ms-2">' + (j.surnom || '') + '</small>' +
+          '<small class="text-muted ms-2">' + (j.tel || '') + '</small>' +
+          '</div>';
+      });
+      resultsContainer.classList.remove('d-none');
+    }).searchJeunesForRappel(query);
+  }
+
+  function selectJeuneForRappelView(id, nom) {
+    document.getElementById('rappel-view-id-jeune').value = id;
+    document.getElementById('rappel-view-selected-name').innerText = nom;
+    document.getElementById('rappel-view-selected').classList.remove('d-none');
+    document.getElementById('rappel-view-search-results').classList.add('d-none');
+    document.getElementById('rappel-view-search').value = "";
+  }
+
+  function clearRappelViewSelection() {
+    document.getElementById('rappel-view-id-jeune').value = "";
+    document.getElementById('rappel-view-selected').classList.add('d-none');
+    document.getElementById('rappel-view-selected-name').innerText = "";
+  }
+
+  function soumettreRappelFromView() {
+    var idJeune = document.getElementById('rappel-view-id-jeune').value;
+    var titre = document.getElementById('rappel-view-titre').value;
+    var date = document.getElementById('rappel-view-date').value;
+    var details = document.getElementById('rappel-view-details').value;
+    var typeRappel = getDropdownValue('rappel-view-type');
+
+    if (!idJeune) { alert("Veuillez sélectionner un jeune."); return; }
+    if (!titre || !date) { alert("Titre et Date obligatoires."); return; }
+
+    var form = {
+      idJeune: idJeune,
+      titre: titre,
+      date: date,
+      details: details,
+      typeRappel: typeRappel
+    };
+
+    document.getElementById('loader').style.display = 'block';
+    modalRappelFromViewInstance.hide();
+    google.script.run.withSuccessHandler(function(res) {
+      document.getElementById('loader').style.display = 'none';
+      alert(res.message);
+      if (res.success) loadRappels();
+    }).saveManualReminder(form);
+  }
+
+  // ============================================================================
+  //        COMMENTAIRE SUR RAPPEL
+  // ============================================================================
+
+  function openAddCommentModal(idRappel) {
+    document.getElementById('comment-rappel-id').value = idRappel;
+    document.getElementById('comment-text').value = "";
+    modalAddCommentInstance.show();
+  }
+
+  function soumettreCommentRappel() {
+    var idRappel = document.getElementById('comment-rappel-id').value;
+    var comment = document.getElementById('comment-text').value;
+    if (!comment || !comment.trim()) { alert("Entrez un commentaire."); return; }
+
+    document.getElementById('loader').style.display = 'block';
+    modalAddCommentInstance.hide();
+    google.script.run.withSuccessHandler(function(res) {
+      document.getElementById('loader').style.display = 'none';
+      if (res.success) {
+        loadRappels();
+      } else {
+        alert(res.message);
+      }
+    }).withFailureHandler(function(err) {
+      document.getElementById('loader').style.display = 'none';
+      alert("Erreur : " + err.message);
+    }).addCommentToRappel(idRappel, comment);
+  }
+  // ============================================================================
+  //       STATISTIQUES DETAILLEES (appelle getStatisticsDetailed)
+  // ============================================================================
+
+  var STATS_LIST_CONFIG = [
+    { key: 'nationalites',        label: 'Nationalités',          icon: 'fa-globe',             source: 'jeunes',  configKey: 'NATIONALITES' },
+    { key: 'langues',             label: 'Langues',               icon: 'fa-language',          source: 'jeunes',  configKey: 'LANGUES' },
+    { key: 'statut_presence',     label: 'Statuts Présence',      icon: 'fa-map-marker-alt',    source: 'jeunes',  configKey: 'STATUT_PRESENCE' },
+    { key: 'statuts_mab',         label: 'Statuts MAB',           icon: 'fa-shield-alt',        source: 'jeunes',  configKey: 'STATUTS_MAB' },
+    { key: 'lieux_vie',           label: 'Lieux de Vie',          icon: 'fa-home',              source: 'jeunes',  configKey: 'LIEUX_VIE' },
+    { key: 'vulnerabilites_tags', label: 'Vulnérabilités',        icon: 'fa-exclamation-triangle', source: 'jeunes', configKey: 'VULNERABILITES_TAGS' },
+    { key: 'types_evenements',    label: "Types d'Événements",    icon: 'fa-calendar-alt',      source: 'events',  totalKey: 'total_types_evenements', configKey: 'TYPES_EVENEMENTS' },
+    { key: 'types_contact',       label: 'Types de Contact',      icon: 'fa-phone-alt',         source: 'events',  totalKey: 'total_types_contact', configKey: 'TYPES_CONTACT' },
+    { key: 'motif_statut_mab',    label: 'Motifs Statut MAB',     icon: 'fa-ban',               source: 'events',  totalKey: 'total_motif_statut_mab', configKey: 'MOTIF_STATUT_MAB' },
+    { key: 'materiel',            label: 'Matériel Distribué',    icon: 'fa-box',               source: 'events',  totalKey: 'total_materiel', configKey: 'MATERIEL' }
+  ];
+
+  function loadStats() {
+    var start = document.getElementById('stats-start').value;
+    var end = document.getElementById('stats-end').value;
+    if (!start || !end) { alert("Sélectionnez les dates."); return; }
+    
+    document.getElementById('loader').style.display = 'block';
+    google.script.run.withSuccessHandler(function(stats) {
+      document.getElementById('loader').style.display = 'none';
+      document.getElementById('stats-results').classList.remove('d-none');
+      GLOBAL_STATS_DETAILED = stats;
+
+      // Sous-cartes Présence
+      document.getElementById('stat-presents').innerText = stats.presents;
+      document.getElementById('stat-m15').innerText = stats.mineurs_moins_15;
+      document.getElementById('stat-filles').innerText = stats.filles;
+      document.getElementById('stat-nouveaux').innerText = stats.nouveaux;
+
+      // Label période
+      document.getElementById('stats-periode-label').innerText = 'Période : ' + stats.periode_debut + ' \u2192 ' + stats.periode_fin;
+
+      // Générer les cartes listes dynamiques
+      renderStatsListCards(stats);
+
+      // Générer les favoris
+      renderStatsFavoris(stats);
+
+      // Orphelins
+      renderStatsOrphelins(stats);
+
+    }).withFailureHandler(function(err) {
+      document.getElementById('loader').style.display = 'none';
+      alert("Erreur calcul stats: " + err.message);
+    }).getStatisticsDetailed(start, end);
+  }
+
+  // ============================================================================
+  //       RENDU DES CARTES LISTES BDD_CONFIG — GRILLE HORIZONTALE
+  // ============================================================================
+
+  function renderStatsListCards(stats) {
+    var container = document.getElementById('stats-lists-container');
+    container.innerHTML = '';
+
+    // MODIFIÉ : Wrapper grille horizontale
+    var gridDiv = document.createElement('div');
+    gridDiv.className = 'stats-lists-grid';
+
+    STATS_LIST_CONFIG.forEach(function(cfg) {
+      var data = stats[cfg.key];
+      if (!data) return;
+
+      var entries = [];
+      for (var item in data) {
+        if (data.hasOwnProperty(item) && data[item] > 0) {
+          entries.push({ name: item, count: data[item] });
+        }
+      }
+      entries.sort(function(a, b) { return b.count - a.count; });
+
+      var total = cfg.totalKey ? (stats[cfg.totalKey] || 0) : entries.reduce(function(s, e) { return s + e.count; }, 0);
+      var sourceLabel = cfg.source === 'events' ? '(sur la période)' : '(stock fiches)';
+
+      var itemsHtml = '';
+      entries.forEach(function(e) {
+        itemsHtml += '<div class="stats-list-item"><span class="item-name">' + e.name + '</span><span class="item-count">' + e.count + '</span></div>';
+      });
+      if (entries.length === 0) {
+        itemsHtml = '<div class="text-muted small text-center py-2">Aucune donnée</div>';
+      }
+
+      var cardDiv = document.createElement('div');
+      cardDiv.className = 'stats-list-card collapsed';
+      cardDiv.id = 'stats-card-' + cfg.key;
+      cardDiv.innerHTML = '<div class="stats-list-header" onclick="toggleStatsCard(\'' + cfg.key + '\')">' +
+        '<h6><i class="fas ' + cfg.icon + ' me-2 text-primary"></i>' + cfg.label + ' <small class="text-muted fw-normal">' + sourceLabel + '</small></h6>' +
+        '<div class="d-flex align-items-center gap-2">' +
+        '<span class="stats-list-total">' + total + '</span>' +
+        '<i class="fas fa-chevron-down stats-list-toggle"></i>' +
+        '</div></div>' +
+        '<div class="stats-list-body">' + itemsHtml + '</div>';
+      gridDiv.appendChild(cardDiv);
+    });
+
+    container.appendChild(gridDiv);
+  }
+
+  function toggleStatsCard(key) {
+    var card = document.getElementById('stats-card-' + key);
+    if (card) card.classList.toggle('collapsed');
+  }
+
+  function toggleAllStatsCards(show) {
+    document.querySelectorAll('.stats-list-card').forEach(function(card) {
+      if (show) card.classList.remove('collapsed');
+      else card.classList.add('collapsed');
+    });
+  }
+
+  // ============================================================================
+  //       ORPHELINS
+  // ============================================================================
+
+  function renderStatsOrphelins(stats) {
+    var orphCard = document.getElementById('stats-orphelins-card');
+    var orphList = document.getElementById('stats-orphelins-list');
+    orphList.innerHTML = '';
+
+    if (!stats.orphelins || Object.keys(stats.orphelins).length === 0) {
+      orphCard.classList.add('d-none');
+      return;
+    }
+    orphCard.classList.remove('d-none');
+    for (var item in stats.orphelins) {
+      if (stats.orphelins.hasOwnProperty(item)) {
+        orphList.innerHTML += '<div class="col-auto"><span class="stats-orphelins-item">' + item + ' <span class="orphelin-count">' + stats.orphelins[item] + '</span></span></div>';
+      }
+    }
+  }
+
+  // ============================================================================
+  //       SYSTEME DE FAVORIS (localStorage) — AVEC ITEMS À 0 + ORPHELINS
+  // ============================================================================
+
+  function loadFavorisFromStorage() {
+    try {
+      var stored = localStorage.getItem('TAMABOCHI_STATS_FAVORIS');
+      // Migration depuis l'ancienne clé si elle existe
+      if (!stored) {
+        stored = localStorage.getItem('MNA_GS_STATS_FAVORIS');
+        if (stored) {
+          localStorage.setItem('TAMABOCHI_STATS_FAVORIS', stored);
+          localStorage.removeItem('MNA_GS_STATS_FAVORIS');
+        }
+      }
+      STATS_FAVORIS = stored ? JSON.parse(stored) : [];
+    } catch(e) { STATS_FAVORIS = []; }
+  }
+
+  function saveFavorisToStorage() {
+    try { localStorage.setItem('TAMABOCHI_STATS_FAVORIS', JSON.stringify(STATS_FAVORIS)); }
+    catch(e) { console.error("Erreur sauvegarde favoris:", e); }
+  }
+
+  // MODIFIÉ : Affiche les items à 0 grisés en bas de chaque liste favorite
+  function renderStatsFavoris(stats) {
+    var container = document.getElementById('stats-favoris-container');
+    container.innerHTML = '';
+
+    if (!STATS_FAVORIS || STATS_FAVORIS.length === 0 || !stats) {
+      container.classList.add('d-none');
+      return;
+    }
+    container.classList.remove('d-none');
+
+    STATS_FAVORIS.forEach(function(fav, idx) {
+      var itemsWithData = [];
+      var itemsZero = [];
+
+      fav.items.forEach(function(item) {
+        if (item.category === '_subcards') {
+          var val = stats[item.name];
+          if (val !== undefined && val > 0) {
+            itemsWithData.push({ html: '<div class="stats-list-item"><span class="item-name"><strong>' + item.label + '</strong></span><span class="item-count">' + val + '</span></div>', name: item.label, count: val });
+          } else {
+            itemsZero.push({ html: '<div class="stats-list-item item-zero"><span class="item-name"><strong>' + item.label + '</strong></span><span class="item-count">0</span></div>', name: item.label, count: 0 });
+          }
+        } else if (item.category === '_orphelins') {
+          // Orphelins dans les favoris
+          var orphData = stats.orphelins || {};
+          var orphVal = orphData[item.name] || 0;
+          if (orphVal > 0) {
+            itemsWithData.push({ html: '<div class="stats-list-item"><span class="item-name">' + item.name + ' <small class="text-muted">(orphelin)</small></span><span class="item-count">' + orphVal + '</span></div>', name: item.name, count: orphVal });
+          } else {
+            itemsZero.push({ html: '<div class="stats-list-item item-zero"><span class="item-name">' + item.name + ' <small class="text-muted">(orphelin)</small></span><span class="item-count">0</span></div>', name: item.name, count: 0 });
+          }
+        } else {
+          var catData = stats[item.category];
+          var val = (catData && catData[item.name] !== undefined) ? catData[item.name] : 0;
+          if (val > 0) {
+            itemsWithData.push({ html: '<div class="stats-list-item"><span class="item-name">' + item.name + '</span><span class="item-count">' + val + '</span></div>', name: item.name, count: val });
+          } else {
+            itemsZero.push({ html: '<div class="stats-list-item item-zero"><span class="item-name">' + item.name + '</span><span class="item-count">0</span></div>', name: item.name, count: 0 });
+          }
+        }
+      });
+
+      // Construire le HTML : d'abord les items > 0, puis les items = 0 grisés en bas
+      var allItemsHtml = '';
+      itemsWithData.forEach(function(i) { allItemsHtml += i.html; });
+      itemsZero.forEach(function(i) { allItemsHtml += i.html; });
+
+      if (allItemsHtml === '') allItemsHtml = '<div class="text-muted small text-center py-2">Aucun item sélectionné.</div>';
+
+      container.innerHTML += '<div class="favori-card mb-3"><div class="favori-header">' +
+        '<h6><i class="fas fa-star me-2"></i>' + fav.name + '</h6>' +
+        '<div class="favori-actions"><button class="btn-copy-favori" onclick="copyFavori(' + idx + ')"><i class="fas fa-copy me-1"></i>Copier</button></div>' +
+        '</div><div class="favori-body">' + allItemsHtml + '</div></div>';
+    });
+  }
+
+  function copyFavori(idx) {
+    if (!GLOBAL_STATS_DETAILED || !STATS_FAVORIS[idx]) return;
+    var fav = STATS_FAVORIS[idx];
+    var stats = GLOBAL_STATS_DETAILED;
+    var lines = ['--- ' + fav.name + ' ---'];
+    fav.items.forEach(function(item) {
+      if (item.category === '_subcards') {
+        var val = stats[item.name];
+        if (val !== undefined) lines.push(item.label + ' : ' + val);
+      } else if (item.category === '_orphelins') {
+        var orphData = stats.orphelins || {};
+        var orphVal = orphData[item.name] || 0;
+        lines.push(item.name + ' (orphelin) : ' + orphVal);
+      } else {
+        var catData = stats[item.category];
+        var val = (catData && catData[item.name] !== undefined) ? catData[item.name] : 0;
+        lines.push(item.name + ' : ' + val);
+      }
+    });
+    var el = document.createElement('textarea');
+    el.value = lines.join('\n');
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    alert("Favori copié !");
+  }
+
+  function openManageFavorisModal() {
+    var container = document.getElementById('manage-favoris-list');
+    container.innerHTML = '';
+    if (STATS_FAVORIS.length === 0) {
+      container.innerHTML = '<p class="text-muted text-center py-3">Aucun favori créé.</p>';
+    } else {
+      STATS_FAVORIS.forEach(function(fav, idx) {
+        container.innerHTML += '<div class="manage-favori-item"><div class="favori-info">' +
+          '<div class="favori-title"><i class="fas fa-star text-warning me-1"></i>' + fav.name + '</div>' +
+          '<div class="favori-count">' + fav.items.length + ' item(s)</div>' +
+          '</div><div class="favori-btns">' +
+          '<button class="btn btn-sm btn-outline-warning" onclick="editFavori(' + idx + ')"><i class="fas fa-pen"></i></button>' +
+          '<button class="btn btn-sm btn-outline-danger" onclick="deleteFavori(' + idx + ')"><i class="fas fa-trash"></i></button>' +
+          '</div></div>';
+      });
+    }
+    modalManageFavorisInstance.show();
+  }
+
+  function closeManageFavorisAndCreate() {
+    modalManageFavorisInstance.hide();
+    setTimeout(function() { openCustomizeFavoriModal(); }, 300);
+  }
+
+  function deleteFavori(idx) {
+    if (!confirm("Supprimer ce favori ?")) return;
+    STATS_FAVORIS.splice(idx, 1);
+    saveFavorisToStorage();
+    openManageFavorisModal();
+    if (GLOBAL_STATS_DETAILED) renderStatsFavoris(GLOBAL_STATS_DETAILED);
+  }
+
+  function editFavori(idx) {
+    modalManageFavorisInstance.hide();
+    setTimeout(function() { openCustomizeFavoriModal(idx); }, 300);
+  }
+
+  // MODIFIÉ : Inclure TOUS les items BDD_CONFIG (même count=0) + orphelins dans le sélecteur
+  function openCustomizeFavoriModal(editIndex) {
+    var selector = document.getElementById('favori-items-selector');
+    selector.innerHTML = '';
+    var nameInput = document.getElementById('favori-name');
+    var editIdxInput = document.getElementById('favori-edit-index');
+
+    var existingItems = [];
+    if (editIndex !== undefined && editIndex >= 0 && STATS_FAVORIS[editIndex]) {
+      nameInput.value = STATS_FAVORIS[editIndex].name;
+      existingItems = STATS_FAVORIS[editIndex].items;
+      editIdxInput.value = editIndex;
+    } else {
+      nameInput.value = '';
+      editIdxInput.value = '-1';
+    }
+
+    // Sous-cartes spéciales (indicateurs globaux)
+    var subcards = [
+      { name: 'presents', label: 'Présents' },
+      { name: 'mineurs_moins_15', label: 'Moins de 15 ans' },
+      { name: 'filles', label: 'Filles' },
+      { name: 'nouveaux', label: 'Nouveaux (période)' }
+    ];
+
+    var subHtml = '<div class="favori-category"><div class="favori-category-title">Indicateurs Globaux</div>';
+    subcards.forEach(function(sc) {
+      var checked = existingItems.some(function(ei) { return ei.category === '_subcards' && ei.name === sc.name; });
+      var val = GLOBAL_STATS_DETAILED ? (GLOBAL_STATS_DETAILED[sc.name] || 0) : '?';
+      var zeroClass = (val === 0 || val === '0') ? 'item-zero-preview' : '';
+      subHtml += '<div class="favori-item-check ' + zeroClass + '">' +
+        '<input type="checkbox" id="fav_sub_' + sc.name + '" data-category="_subcards" data-name="' + sc.name + '" data-label="' + sc.label + '" ' + (checked ? 'checked' : '') + '>' +
+        '<label for="fav_sub_' + sc.name + '">' + sc.label + '</label>' +
+        '<span class="item-count-preview">' + val + '</span></div>';
+    });
+    subHtml += '</div>';
+    selector.innerHTML += subHtml;
+
+    // Catégories BDD_CONFIG — TOUS les items (même count=0)
+    STATS_LIST_CONFIG.forEach(function(cfg) {
+      var statsData = GLOBAL_STATS_DETAILED ? GLOBAL_STATS_DETAILED[cfg.key] : {};
+      if (!statsData) statsData = {};
+
+      // Récupérer la liste complète depuis config_lists (retournée par le backend)
+      var configList = [];
+      if (GLOBAL_STATS_DETAILED && GLOBAL_STATS_DETAILED.config_lists && GLOBAL_STATS_DETAILED.config_lists[cfg.configKey]) {
+        configList = GLOBAL_STATS_DETAILED.config_lists[cfg.configKey];
+      }
+
+      // Construire la liste de tous les items uniques (config + données)
+      var allItemsMap = {};
+      // D'abord les items de la config
+      configList.forEach(function(item) {
+        var strItem = String(item).trim();
+        if (strItem && !strItem.startsWith('---')) {
+          allItemsMap[strItem] = statsData[strItem] || 0;
+        }
+      });
+      // Ensuite les items des données qui ne sont pas dans la config (orphelins de cette catégorie)
+      for (var dataItem in statsData) {
+        if (statsData.hasOwnProperty(dataItem) && !allItemsMap.hasOwnProperty(dataItem)) {
+          allItemsMap[dataItem] = statsData[dataItem];
+        }
+      }
+
+      var allEntries = [];
+      for (var itemName in allItemsMap) {
+        if (allItemsMap.hasOwnProperty(itemName)) {
+          allEntries.push({ name: itemName, count: allItemsMap[itemName] });
+        }
+      }
+      // Trier : count > 0 d'abord (décroissant), puis count = 0 (alphabétique)
+      allEntries.sort(function(a, b) {
+        if (a.count > 0 && b.count === 0) return -1;
+        if (a.count === 0 && b.count > 0) return 1;
+        if (a.count > 0 && b.count > 0) return b.count - a.count;
+        return a.name.localeCompare(b.name);
+      });
+
+      if (allEntries.length === 0) return;
+
+      var catHtml = '<div class="favori-category"><div class="favori-category-title">' + cfg.label + '</div>';
+      allEntries.forEach(function(e, eIdx) {
+        var checked = existingItems.some(function(ei) { return ei.category === cfg.key && ei.name === e.name; });
+        var safeId = 'fav_' + cfg.key + '_' + eIdx;
+        var zeroClass = (e.count === 0) ? 'item-zero-preview' : '';
+        catHtml += '<div class="favori-item-check ' + zeroClass + '">' +
+          '<input type="checkbox" id="' + safeId + '" data-category="' + cfg.key + '" data-name="' + e.name + '" ' + (checked ? 'checked' : '') + '>' +
+          '<label for="' + safeId + '">' + e.name + '</label>' +
+          '<span class="item-count-preview">' + e.count + '</span></div>';
+      });
+      catHtml += '</div>';
+      selector.innerHTML += catHtml;
+    });
+
+    // NOUVEAU : Orphelins dans le sélecteur de favoris
+    if (GLOBAL_STATS_DETAILED && GLOBAL_STATS_DETAILED.orphelins && Object.keys(GLOBAL_STATS_DETAILED.orphelins).length > 0) {
+      var orphHtml = '<div class="favori-category"><div class="favori-category-title">Items Orphelins</div>';
+      var orphIdx = 0;
+      for (var orphName in GLOBAL_STATS_DETAILED.orphelins) {
+        if (GLOBAL_STATS_DETAILED.orphelins.hasOwnProperty(orphName)) {
+          var orphCount = GLOBAL_STATS_DETAILED.orphelins[orphName];
+          var checked = existingItems.some(function(ei) { return ei.category === '_orphelins' && ei.name === orphName; });
+          var safeId = 'fav_orph_' + orphIdx;
+          orphHtml += '<div class="favori-item-check">' +
+            '<input type="checkbox" id="' + safeId + '" data-category="_orphelins" data-name="' + orphName + '" ' + (checked ? 'checked' : '') + '>' +
+            '<label for="' + safeId + '">' + orphName + ' <small class="text-muted">(orphelin)</small></label>' +
+            '<span class="item-count-preview">' + orphCount + '</span></div>';
+          orphIdx++;
+        }
+      }
+      orphHtml += '</div>';
+      selector.innerHTML += orphHtml;
+    }
+
+    modalCustomizeFavoriInstance.show();
+  }
+
+  function saveFavori() {
+    var name = document.getElementById('favori-name').value.trim();
+    if (!name) { alert("Donnez un nom à la liste."); return; }
+
+    var items = [];
+    document.querySelectorAll('#favori-items-selector input[type="checkbox"]:checked').forEach(function(cb) {
+      var cat = cb.getAttribute('data-category');
+      var nm = cb.getAttribute('data-name');
+      var lbl = cb.getAttribute('data-label') || nm;
+      if (cat === '_subcards') {
+        items.push({ category: '_subcards', name: nm, label: lbl });
+      } else if (cat === '_orphelins') {
+        items.push({ category: '_orphelins', name: nm });
+      } else {
+        items.push({ category: cat, name: nm });
+      }
+    });
+    if (items.length === 0) { alert("Sélectionnez au moins un item."); return; }
+
+    var editIdx = parseInt(document.getElementById('favori-edit-index').value);
+    if (editIdx >= 0 && STATS_FAVORIS[editIdx]) {
+      STATS_FAVORIS[editIdx].name = name;
+      STATS_FAVORIS[editIdx].items = items;
+    } else {
+      STATS_FAVORIS.push({ name: name, items: items });
+    }
+    saveFavorisToStorage();
+    modalCustomizeFavoriInstance.hide();
+    alert("Favori enregistré !");
+    if (GLOBAL_STATS_DETAILED) renderStatsFavoris(GLOBAL_STATS_DETAILED);
+  }
+
+  // ============================================================================
+  //       LIAISON GROUPE (MODALE RECHERCHE + SÉLECTION MULTIPLE)
+  // ============================================================================
+
+  function openGroupLinkModal(context) {
+    document.getElementById('group-link-context').value = context;
+    document.getElementById('group-link-search').value = '';
+    document.getElementById('group-link-results').innerHTML = '<p class="text-muted text-center small py-3">Les résultats apparaîtront ici.</p>';
+    
+    // Si contexte = enregistrement, garder la sélection existante ; sinon reset
+    if (context === 'fiche') {
+      GROUP_LINK_SELECTED = [];
+    }
+    renderGroupLinkSelected();
+    modalGroupLinkInstance.show();
+  }
+
+  var groupLinkSearchTimer = null;
+
+  function searchJeunesForGroupLinkUI(query) {
+    clearTimeout(groupLinkSearchTimer);
+    var resultsContainer = document.getElementById('group-link-results');
+
+    if (!query || query.length < 2) {
+      resultsContainer.innerHTML = '<p class="text-muted text-center small py-3">Tapez au moins 2 caractères.</p>';
+      return;
+    }
+
+    groupLinkSearchTimer = setTimeout(function() {
+      resultsContainer.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-primary"></div></div>';
+
+      google.script.run.withSuccessHandler(function(results) {
+        resultsContainer.innerHTML = '';
+        if (!results || results.length === 0) {
+          resultsContainer.innerHTML = '<p class="text-muted text-center small py-3">Aucun résultat.</p>';
+          return;
+        }
+
+        results.forEach(function(j) {
+          var isSelected = GROUP_LINK_SELECTED.some(function(s) { return s.id === j.id; });
+          var selectedClass = isSelected ? 'selected' : '';
+          var groupInfo = j.id_groupe ? ' <small class="text-muted">(groupe existant)</small>' : '';
+
+          var itemDiv = document.createElement('div');
+          itemDiv.className = 'group-link-result-item ' + selectedClass;
+          itemDiv.setAttribute('data-id', j.id);
+          itemDiv.innerHTML = '<div class="result-info">' +
+            '<div class="result-name">' + j.nom + groupInfo + '</div>' +
+            '<div class="result-details">' + (j.tel || 'Pas de tel') + ' · ' + (j.age || '?') + ' ans · ' + (j.lieu || '') + '</div>' +
+            '</div>' +
+            '<div>' + (isSelected ? '<i class="fas fa-check-circle text-success"></i>' : '<i class="fas fa-plus-circle text-muted"></i>') + '</div>';
+
+          itemDiv.addEventListener('click', function() {
+            toggleGroupLinkSelection(j);
+          });
+
+          resultsContainer.appendChild(itemDiv);
+        });
+      }).withFailureHandler(function(err) {
+        resultsContainer.innerHTML = '<p class="text-danger text-center small py-3">Erreur : ' + err.message + '</p>';
+      }).searchJeunesForGroupLink(query);
+    }, 300);
+  }
+
+  function toggleGroupLinkSelection(jeune) {
+    var idx = GROUP_LINK_SELECTED.findIndex(function(s) { return s.id === jeune.id; });
+    if (idx >= 0) {
+      GROUP_LINK_SELECTED.splice(idx, 1);
+    } else {
+      // Ne pas ajouter le jeune courant (si contexte fiche)
+      if (currentJeuneData && jeune.id === currentJeuneData.id) {
+        alert("Vous ne pouvez pas lier un jeune à lui-même.");
+        return;
+      }
+      GROUP_LINK_SELECTED.push({ id: jeune.id, nom: jeune.nom });
+    }
+    renderGroupLinkSelected();
+
+    // Mettre à jour l'état visuel dans les résultats
+    document.querySelectorAll('.group-link-result-item').forEach(function(el) {
+      var elId = el.getAttribute('data-id');
+      var isSelected = GROUP_LINK_SELECTED.some(function(s) { return s.id === elId; });
+      if (isSelected) {
+        el.classList.add('selected');
+        el.querySelector('div:last-child').innerHTML = '<i class="fas fa-check-circle text-success"></i>';
+      } else {
+        el.classList.remove('selected');
+        el.querySelector('div:last-child').innerHTML = '<i class="fas fa-plus-circle text-muted"></i>';
+      }
+    });
+  }
+
+  function renderGroupLinkSelected() {
+    var context = document.getElementById('group-link-context').value;
+
+    // Rendu dans la modale
+    var container = document.getElementById('group-link-selected');
+    container.innerHTML = '';
+    if (GROUP_LINK_SELECTED.length === 0) {
+      container.innerHTML = '<span class="text-muted small">Aucun jeune sélectionné.</span>';
+    } else {
+      GROUP_LINK_SELECTED.forEach(function(s) {
+        container.innerHTML += '<span class="group-link-badge">' + s.nom +
+          ' <span class="badge-remove" onclick="removeGroupLinkSelection(\'' + s.id + '\')">&times;</span></span>';
+      });
+    }
+
+    // Si contexte enregistrement, mettre à jour aussi la zone dans le formulaire
+    if (context === 'enregistrement') {
+      var formContainer = document.getElementById('new-link-group-selected');
+      if (formContainer) {
+        formContainer.innerHTML = '';
+        GROUP_LINK_SELECTED.forEach(function(s) {
+          formContainer.innerHTML += '<span class="group-link-badge">' + s.nom +
+            ' <span class="badge-remove" onclick="removeGroupLinkFromForm(\'' + s.id + '\')">&times;</span></span>';
+        });
+      }
+    }
+  }
+
+  function removeGroupLinkSelection(id) {
+    GROUP_LINK_SELECTED = GROUP_LINK_SELECTED.filter(function(s) { return s.id !== id; });
+    renderGroupLinkSelected();
+    // Mettre à jour les résultats visuels
+    document.querySelectorAll('.group-link-result-item').forEach(function(el) {
+      if (el.getAttribute('data-id') === id) {
+        el.classList.remove('selected');
+        el.querySelector('div:last-child').innerHTML = '<i class="fas fa-plus-circle text-muted"></i>';
+      }
+    });
+  }
+
+  function removeGroupLinkFromForm(id) {
+    GROUP_LINK_SELECTED = GROUP_LINK_SELECTED.filter(function(s) { return s.id !== id; });
+    var formContainer = document.getElementById('new-link-group-selected');
+    if (formContainer) {
+      formContainer.innerHTML = '';
+      GROUP_LINK_SELECTED.forEach(function(s) {
+        formContainer.innerHTML += '<span class="group-link-badge">' + s.nom +
+          ' <span class="badge-remove" onclick="removeGroupLinkFromForm(\'' + s.id + '\')">&times;</span></span>';
+      });
+    }
+    if (GROUP_LINK_SELECTED.length === 0) {
+      document.getElementById('linked-group-id').value = '';
+    }
+  }
+
+  function confirmGroupLink() {
+    if (GROUP_LINK_SELECTED.length === 0) {
+      alert("Sélectionnez au moins un jeune à lier.");
+      return;
+    }
+
+    var context = document.getElementById('group-link-context').value;
+
+    if (context === 'enregistrement') {
+      // Stocker l'intention de liaison — sera exécutée après la création du jeune
+      // On demande au backend de préparer un groupId
+      var targetIds = GROUP_LINK_SELECTED.map(function(s) { return s.id; });
+      document.getElementById('loader').style.display = 'block';
+      google.script.run.withSuccessHandler(function(res) {
+        document.getElementById('loader').style.display = 'none';
+        if (res && res.groupId) {
+          document.getElementById('linked-group-id').value = res.groupId;
+        }
+        modalGroupLinkInstance.hide();
+        // Mettre à jour l'affichage dans le formulaire
+        renderGroupLinkSelected();
+      }).withFailureHandler(function(err) {
+        document.getElementById('loader').style.display = 'none';
+        alert("Erreur : " + err.message);
+      }).getGroupIdForLinking(targetIds);
+
+    } else if (context === 'fiche') {
+      // Exécuter la liaison immédiatement
+      if (!currentJeuneData) return;
+      var targetIds = GROUP_LINK_SELECTED.map(function(s) { return s.id; });
+
+      document.getElementById('loader').style.display = 'block';
+      modalGroupLinkInstance.hide();
+
+      google.script.run.withSuccessHandler(function(res) {
+        document.getElementById('loader').style.display = 'none';
+        if (res.success) {
+          alert(res.message);
+          GROUP_LINK_SELECTED = [];
+          // Rafraîchir la fiche pour voir le groupe
+          ouvrirFiche(currentJeuneData.id);
+        } else {
+          alert(res.message);
+        }
+      }).withFailureHandler(function(err) {
+        document.getElementById('loader').style.display = 'none';
+        alert("Erreur : " + err.message);
+      }).linkJeunesToGroup(currentJeuneData.id, targetIds);
+    }
+  }
+
+  // ============================================================================
+  //                    RAPPORT IP
+  // ============================================================================
+
+  function generateReport() {
+    if (!currentJeuneData) return;
+    document.getElementById('loader').style.display = 'block';
+    google.script.run.withSuccessHandler(function(txt) {
+      document.getElementById('loader').style.display = 'none';
+      document.getElementById('report-text').value = txt;
+      modalReportInstance.show();
+    }).generateReportText(currentJeuneData.id);
+  }
+
+  function copyReport() {
+    var copyText = document.getElementById("report-text");
+    copyText.select();
+    document.execCommand("copy");
+    alert("Rapport copié !");
+  }
+
+  // ============================================================================
+  //                    COPIER RECAP STATS (version TAMABochi)
+  // ============================================================================
+
+  function copyStatsSummary() {
+    if (!GLOBAL_STATS_DETAILED) { alert("Calculez les stats d'abord."); return; }
+    var s = GLOBAL_STATS_DETAILED;
+    var txt = "--- RECAP TAMABochi ---\n";
+    txt += "Période : " + s.periode_debut + " \u2192 " + s.periode_fin + "\n\n";
+
+    txt += "POPULATION :\n";
+    txt += "- Présents : " + s.presents + "\n";
+    txt += "- Moins de 15 ans : " + s.mineurs_moins_15 + "\n";
+    txt += "- Filles : " + s.filles + "\n";
+    txt += "- Nouveaux (période) : " + s.nouveaux + "\n\n";
+
+    STATS_LIST_CONFIG.forEach(function(cfg) {
+      var data = s[cfg.key];
+      if (!data) return;
+      var entries = [];
+      for (var k in data) {
+        if (data.hasOwnProperty(k) && data[k] > 0) entries.push({ name: k, count: data[k] });
+      }
+      if (entries.length === 0) return;
+      entries.sort(function(a, b) { return b.count - a.count; });
+      var sourceLabel = cfg.source === 'events' ? '(période)' : '(stock)';
+      txt += cfg.label.toUpperCase() + " " + sourceLabel + " :\n";
+      entries.forEach(function(e) {
+        txt += "- " + e.name + " : " + e.count + "\n";
+      });
+      txt += "\n";
+    });
+
+    if (s.orphelins && Object.keys(s.orphelins).length > 0) {
+      txt += "ITEMS ORPHELINS :\n";
+      for (var oi in s.orphelins) {
+        if (s.orphelins.hasOwnProperty(oi)) txt += "- " + oi + " : " + s.orphelins[oi] + "\n";
+      }
+    }
+
+    var el = document.createElement('textarea');
+    el.value = txt;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    alert("Récapitulatif copié !");
+  }
+</script>
