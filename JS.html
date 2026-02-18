@@ -35,6 +35,14 @@
   let GLOBAL_STATS_DETAILED = null;
   // NOUVEAU : Sélection temporaire pour liaison groupe
   let GROUP_LINK_SELECTED = [];
+     // Phase 3 : Widgets Plaidoyer
+     let PLAIDOYER_WIDGETS = [];
+     let WIDGET_RESULTS = {};
+     let WIDGET_CONFIG_ITEMS = null;
+     let LAYOUT_MODE = false;
+     let modalCreateStatInstance, modalAddSingleItemInstance, modalAddItemListInstance;
+     let modalEditWidgetInstance, modalCopyWidgetsInstance, modalConfigViewerInstance;
+     // Phase 4 : Variables initialisées dans JS_additions
 
   // ============================================================================
   //                         AUTHENTIFICATION
@@ -48,6 +56,7 @@
       document.getElementById('loader').style.display = 'none';
       if (res.success) {
         CURRENT_USER = res.user;
+        CURRENT_USER.loginEmail = email;
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('app-content').style.setProperty('display', 'block', 'important');
         document.getElementById('user-display').innerText = "👤" + res.user.nom;
@@ -72,10 +81,19 @@
         modalManageFavorisInstance = new bootstrap.Modal(document.getElementById('modalManageFavoris'));
         modalCustomizeFavoriInstance = new bootstrap.Modal(document.getElementById('modalCustomizeFavori'));
         modalGroupLinkInstance = new bootstrap.Modal(document.getElementById('modalGroupLink'));
+         // Phase 3 : Modales widgets
+         modalCreateStatInstance = new bootstrap.Modal(document.getElementById('modalCreateStat'));
+         modalAddSingleItemInstance = new bootstrap.Modal(document.getElementById('modalAddSingleItem'));
+         modalAddItemListInstance = new bootstrap.Modal(document.getElementById('modalAddItemList'));
+         modalEditWidgetInstance = new bootstrap.Modal(document.getElementById('modalEditWidget'));
+         modalCopyWidgetsInstance = new bootstrap.Modal(document.getElementById('modalCopyWidgets'));
+         modalConfigViewerInstance = new bootstrap.Modal(document.getElementById('modalConfigViewer'));
+         loadWidgetsFromStorage();
 
         // NOUVEAU : Charger les favoris depuis localStorage
         loadFavorisFromStorage();
 
+        // Phase 4 : Dashboard widgets chargés dans loadDashboard()
         loadDashboard();
         // U13 : Démarrer le timer de session
         resetSessionTimer();
@@ -861,8 +879,8 @@
     try {
       var tel = document.getElementById('new-tel').value;
       var nom = document.getElementById('new-nom').value;
-      if (!tel || !nom) {
-        alert("Téléphone et Nom obligatoires");
+      if (!nom) {
+        alert("Nom obligatoire");
         return;
       }
 
@@ -1021,6 +1039,10 @@
     document.getElementById('loader').style.display = 'block';
     google.script.run.withSuccessHandler(function(r) {
       document.getElementById('loader').style.display = 'none';
+      if (!r || !r.success) {
+        alert("Erreur : " + (r ? r.message : "Aucune donnée retournée par le serveur"));
+        return;
+      }
       currentJeuneData = r.jeune;
       CURRENT_HISTORY = r.history;
 
@@ -1029,6 +1051,7 @@
       document.getElementById('fiche-surnom').innerText = j.surnom || "";
       document.getElementById('fiche-tel').innerText = j.tel;
       document.getElementById('fiche-age').innerText = j.age ? j.age + " ans" : "";
+      document.getElementById('fiche-genre').innerText = j.genre || "Non renseigné";
       document.getElementById('fiche-nat').innerText = j.nationalite;
       document.getElementById('fiche-lieu').innerText = j.lieu_vie;
 
@@ -1039,6 +1062,14 @@
 
       document.getElementById('fiche-statut-mab-full').innerText = "MAB : " + j.statut_mab;
       document.getElementById('fiche-statut-presence-full').innerText = "Présence : " + j.statut_presence;
+
+      var motifMabElem = document.getElementById('fiche-motif-mab');
+      if (j.motif_statut_mab) {
+        motifMabElem.innerText = "Motif MAB : " + j.motif_statut_mab;
+        motifMabElem.classList.remove('d-none');
+      } else {
+        motifMabElem.classList.add('d-none');
+      }
 
       var btnGrp = document.getElementById('btn-see-group');
       if (j.has_group) {
@@ -1077,6 +1108,9 @@
 
       renderTimeline();
       modalFicheInstance.show();
+  }).withFailureHandler(function(err) {
+      document.getElementById('loader').style.display = 'none';
+      alert("Erreur serveur getFicheJeune : " + err.message);
     }).getFicheJeune(id);
   }
 
@@ -1206,23 +1240,32 @@
     } else {
       resetDropdown('edit-labels');
     }
+
+    // Vulnérabilités
+    if (currentJeuneData.vulnerabilites) {
+      var vulnArr = currentJeuneData.vulnerabilites.split(',').map(function(s) { return s.trim(); });
+      setDropdownValues('edit-vulns', vulnArr);
+    } else {
+      resetDropdown('edit-vulns');
+    }
     
     modalEditInstance.show();
   }
 
   function saveEditProfile() {
     var form = {
-      id: currentJeuneData.id,
-      nom: document.getElementById('edit-nom').value,
-      surnom: document.getElementById('edit-surnom').value,
-      tel: document.getElementById('edit-tel').value,
-      age: document.getElementById('edit-age').value,
-      lieu: getDropdownValue('edit-lieu'),
-      statutMab: getDropdownValue('edit-statut-mab'),
-      statutPres: getDropdownValue('edit-statut-pres'),
-      notesFixes: document.getElementById('edit-notes-fixes').value,
-      labelsAutres: getDropdownValues('edit-labels')
-    };
+  id: currentJeuneData.id,
+  nom: document.getElementById('edit-nom').value,
+  surnom: document.getElementById('edit-surnom').value,
+  tel: document.getElementById('edit-tel').value,
+  age: document.getElementById('edit-age').value,
+  lieu: getDropdownValue('edit-lieu'),
+  statutMab: getDropdownValue('edit-statut-mab'),
+  statutPres: getDropdownValue('edit-statut-pres'),
+  notesFixes: document.getElementById('edit-notes-fixes').value,
+  labelsAutres: getDropdownValues('edit-labels'),
+  vulnerabilites: getDropdownValues('edit-vulns')
+};
     document.getElementById('loader').style.display = 'block';
     modalEditInstance.hide();
     google.script.run.withSuccessHandler(function(res) {
@@ -1340,23 +1383,23 @@
   // ============================================================================
 
   function loadRappels() {
-    var cEnRetard = document.getElementById('rappels-enretard-container');
-    var cAFaire = document.getElementById('rappels-afaire-container');
-    var cArchives = document.getElementById('rappels-archives-container');
-    cEnRetard.innerHTML = '<div class="text-center w-100 py-4"><div class="spinner-border text-primary"></div></div>';
-    cAFaire.innerHTML = '';
-    cArchives.innerHTML = '';
+  var cEnRetard = document.getElementById('rappels-enretard-container');
+  var cAFaire = document.getElementById('rappels-afaire-container');
+  var cArchives = document.getElementById('rappels-archives-container');
+  cEnRetard.innerHTML = '<div class="text-center w-100 py-4"><div class="spinner-border text-primary"></div></div>';
+  cAFaire.innerHTML = '<div class="text-center w-100 py-4"><div class="spinner-border text-primary spinner-border-sm"></div></div>';
+  cArchives.innerHTML = '<div class="text-center w-100 py-4"><div class="spinner-border text-primary spinner-border-sm"></div></div>';
 
-    google.script.run.withSuccessHandler(function(data) {
-      // data = { enRetard: [...], aFaire: [...], archives: [...] }
-      var enRetard = data.enRetard || [];
-      var aFaire = data.aFaire || [];
-      var archives = data.archives || [];
+  google.script.run.withSuccessHandler(function(data) {
+    try {
+      var enRetard = (data && data.enRetard) ? data.enRetard : [];
+      var aFaire = (data && data.aFaire) ? data.aFaire : [];
+      var archives = (data && data.archives) ? data.archives : [];
 
-      // Fusionner enRetard + aFaire pour le GLOBAL_RAPPELS (compatibilité dashboard)
+      // Fusionner pour GLOBAL_RAPPELS (compatibilité dashboard/modifier)
       GLOBAL_RAPPELS = enRetard.concat(aFaire);
 
-      // U7 : Badge sidebar = nombre en retard
+      // U7 : Badge sidebar
       updateSidebarBadge(enRetard.length);
 
       // Badges compteurs onglets
@@ -1368,11 +1411,17 @@
       renderRappelsList(cEnRetard, enRetard, 'late');
       renderRappelsList(cAFaire, aFaire, '');
       renderRappelsList(cArchives, archives, 'archived');
-
-    }).withFailureHandler(function(err) {
-      cEnRetard.innerHTML = '<div class="alert alert-danger">Erreur chargement rappels: ' + err.message + '</div>';
-    }).getRappelsAll();
-  }
+    } catch(renderErr) {
+      console.error("Erreur rendu rappels:", renderErr);
+      cEnRetard.innerHTML = '<div class="alert alert-danger">Erreur affichage: ' + renderErr.message + '</div>';
+    }
+  }).withFailureHandler(function(err) {
+    console.error("Erreur serveur rappels:", err);
+    cEnRetard.innerHTML = '<div class="alert alert-danger">Erreur serveur: ' + (err.message || err) + '</div>';
+    cAFaire.innerHTML = '';
+    cArchives.innerHTML = '';
+  }).getRappelsAll();
+}
 
   // Fonction de rendu partagée pour les 3 onglets de rappels
   function renderRappelsList(container, items, extraClass) {
@@ -1647,38 +1696,7 @@
   ];
 
   function loadStats() {
-    var start = document.getElementById('stats-start').value;
-    var end = document.getElementById('stats-end').value;
-    if (!start || !end) { alert("Sélectionnez les dates."); return; }
-    
-    document.getElementById('loader').style.display = 'block';
-    google.script.run.withSuccessHandler(function(stats) {
-      document.getElementById('loader').style.display = 'none';
-      document.getElementById('stats-results').classList.remove('d-none');
-      GLOBAL_STATS_DETAILED = stats;
-
-      // Sous-cartes Présence
-      document.getElementById('stat-presents').innerText = stats.presents;
-      document.getElementById('stat-m15').innerText = stats.mineurs_moins_15;
-      document.getElementById('stat-filles').innerText = stats.filles;
-      document.getElementById('stat-nouveaux').innerText = stats.nouveaux;
-
-      // Label période
-      document.getElementById('stats-periode-label').innerText = 'Période : ' + stats.periode_debut + ' \u2192 ' + stats.periode_fin;
-
-      // Générer les cartes listes dynamiques
-      renderStatsListCards(stats);
-
-      // Générer les favoris
-      renderStatsFavoris(stats);
-
-      // Orphelins
-      renderStatsOrphelins(stats);
-
-    }).withFailureHandler(function(err) {
-      document.getElementById('loader').style.display = 'none';
-      alert("Erreur calcul stats: " + err.message);
-    }).getStatisticsDetailed(start, end);
+       computeWidgets();
   }
 
   // ============================================================================
@@ -2328,4 +2346,1661 @@
     document.body.removeChild(el);
     alert("Récapitulatif copié !");
   }
+
+  // ============================================================================
+//  STOCKAGE WIDGETS (localStorage)
+// ============================================================================
+
+function loadWidgetsFromStorage() {
+  var userEmail = CURRENT_USER ? CURRENT_USER.loginEmail : '';
+  if (!userEmail) { PLAIDOYER_WIDGETS = []; renderWidgetsGrid(); return; }
+  
+  google.script.run.withSuccessHandler(function(json) {
+    try {
+      PLAIDOYER_WIDGETS = json ? JSON.parse(json) : [];
+      var needSave = false;
+      PLAIDOYER_WIDGETS.forEach(function(w) {
+        if (w.size && !w.gridColSpan) {
+          needSave = true;
+          if (w.size === 'small') { w.gridColSpan = 2; w.gridRowSpan = 2; }
+          else if (w.size === 'medium') { w.gridColSpan = 3; w.gridRowSpan = 2; }
+          else if (w.size === 'large') { w.gridColSpan = 4; w.gridRowSpan = 3; }
+          else { w.gridColSpan = 3; w.gridRowSpan = 2; }
+          delete w.size;
+        }
+        if (!w.gridColSpan) { w.gridColSpan = 3; w.gridRowSpan = 2; }
+      });
+      if (needSave) saveWidgetsToStorage();
+    } catch(e) { PLAIDOYER_WIDGETS = []; }
+    renderWidgetsGrid();
+  }).withFailureHandler(function(err) {
+    console.error("Erreur chargement plaidoyer widgets:", err);
+    PLAIDOYER_WIDGETS = [];
+    renderWidgetsGrid();
+  }).loadUserPref(userEmail, 'plaidoyer_widgets');
+}
+
+var _savePlaidoyerTimeout = null;
+function saveWidgetsToStorage() {
+  clearTimeout(_savePlaidoyerTimeout);
+  _savePlaidoyerTimeout = setTimeout(function() {
+    var userEmail = CURRENT_USER ? CURRENT_USER.loginEmail : '';
+    if (!userEmail) return;
+    try {
+      var json = JSON.stringify(PLAIDOYER_WIDGETS);
+      google.script.run.withFailureHandler(function(err) {
+        console.error("Erreur sauvegarde plaidoyer widgets:", err);
+      }).saveUserPref(userEmail, 'plaidoyer_widgets', json);
+    } catch(e) { console.error("Erreur sauvegarde widgets:", e); }
+  }, 500);
+}
+
+function toggleLayoutMode() {
+  LAYOUT_MODE = !LAYOUT_MODE;
+  var grid = document.getElementById('widgets-grid');
+  var btn = document.getElementById('btn-layout-mode');
+  if (LAYOUT_MODE) {
+    grid.classList.add('layout-mode');
+    btn.classList.add('active');
+    btn.innerHTML = '<i class="fas fa-lock me-1"></i> Verrouiller';
+  } else {
+    grid.classList.remove('layout-mode');
+    btn.classList.remove('active');
+    btn.innerHTML = '<i class="fas fa-th me-1"></i> Disposer';
+    saveWidgetsToStorage();
+  }
+  renderWidgetsGrid();
+}
+
+function generateWidgetId() {
+  return 'w_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+}
+
+// ============================================================================
+//  DATES RAPIDES
+// ============================================================================
+
+function setQuickDate(days) {
+  var end = new Date();
+  var start = new Date();
+  start.setDate(end.getDate() - days);
+  document.getElementById('stats-start').value = start.toISOString().substring(0, 10);
+  document.getElementById('stats-end').value = end.toISOString().substring(0, 10);
+}
+
+// ============================================================================
+//  CALCUL DES WIDGETS (appel serveur batch)
+// ============================================================================
+
+function computeWidgets() {
+  var start = document.getElementById('stats-start').value;
+  var end = document.getElementById('stats-end').value;
+  if (!start || !end) { alert("Sélectionnez les dates."); return; }
+  if (PLAIDOYER_WIDGETS.length === 0) {
+    alert("Ajoutez des widgets d'abord.");
+    return;
+  }
+
+  document.getElementById('loader').style.display = 'block';
+
+  google.script.run.withSuccessHandler(function(results) {
+    document.getElementById('loader').style.display = 'none';
+    WIDGET_RESULTS = results;
+    // Store full stats for config viewer
+    if (results._fullStats) {
+      GLOBAL_STATS_DETAILED = results._fullStats;
+    }
+    renderWidgetsGrid();
+  }).withFailureHandler(function(err) {
+    document.getElementById('loader').style.display = 'none';
+    alert("Erreur calcul: " + err.message);
+  }).computeAllWidgets(PLAIDOYER_WIDGETS, start, end);
+}
+
+// ============================================================================
+//  RENDU DE LA GRILLE DE WIDGETS
+// ============================================================================
+
+function renderWidgetsGrid() {
+  var grid = document.getElementById('widgets-grid');
+  var empty = document.getElementById('widgets-empty');
+  grid.innerHTML = '';
+
+  if (PLAIDOYER_WIDGETS.length === 0) {
+    grid.appendChild(empty);
+    empty.style.display = '';
+    return;
+  }
+
+  var sorted = PLAIDOYER_WIDGETS.slice().sort(function(a, b) {
+    return (a.order || 0) - (b.order || 0);
+  });
+
+  sorted.forEach(function(w, index) {
+    var result = WIDGET_RESULTS[w.id];
+    var colorClass = 'wc-' + (w.color || 'teal-1');
+
+    var card = document.createElement('div');
+    card.className = 'widget-card ' + colorClass;
+    card.setAttribute('data-widget-id', w.id);
+    card.setAttribute('data-widget-index', index);
+
+    // Appliquer les propriétés CSS Grid
+    var colSpan = w.gridColSpan || 3;
+    var rowSpan = w.gridRowSpan || 2;
+    if (w.gridCol) {
+      card.style.gridColumn = w.gridCol + ' / span ' + colSpan;
+    } else {
+      card.style.gridColumn = 'span ' + colSpan;
+    }
+    if (w.gridRow) {
+      card.style.gridRow = w.gridRow + ' / span ' + rowSpan;
+    } else {
+      card.style.gridRow = 'span ' + rowSpan;
+    }
+
+    if (LAYOUT_MODE) {
+      card.setAttribute('draggable', 'true');
+    }
+
+    var actionsHtml = '<div class="widget-actions">' +
+      '<button class="widget-action-btn" onclick="event.stopPropagation(); openEditWidget(\'' + w.id + '\')" title="Modifier"><i class="fas fa-pen"></i></button>' +
+      '</div>';
+
+    var resizeHtml = '<div class="widget-resize-handle" data-widget-id="' + w.id + '"></div>';
+
+    if (w.type === 'single_item' || w.type === 'custom_stat') {
+      var value = result ? (result.value !== undefined ? result.value : '—') : '—';
+      var pctHtml = '';
+      if (result && result.percentage !== undefined && w.type === 'custom_stat') {
+        pctHtml = '<div class="widget-pct">' + result.percentage + '%';
+        if (result.jeunesCount !== undefined && result.eventsCount !== undefined) {
+          pctHtml += ' <small>(' + result.jeunesCount + ' pers. / ' + result.eventsCount + ' evt)</small>';
+        } else if (result.total !== undefined) {
+          pctHtml += ' <small>(' + result.value + '/' + result.total + ')</small>';
+        }
+        pctHtml += '</div>';
+      }
+
+      card.innerHTML = actionsHtml +
+        '<div class="widget-stat-body">' +
+        '<div class="widget-emoji">' + (w.emoji || '📊') + '</div>' +
+        '<div class="widget-value">' + value + '</div>' +
+        '<div class="widget-title">' + (w.title || 'Sans titre') + '</div>' +
+        pctHtml +
+        '</div>' + resizeHtml;
+
+    } else if (w.type === 'item_list') {
+      var itemsHtml = '';
+      var totalCount = 0;
+      if (result && result.items) {
+        var withData = [];
+        var withZero = [];
+        result.items.forEach(function(it) {
+          if (it.count > 0) { withData.push(it); totalCount += it.count; }
+          else withZero.push(it);
+        });
+        withData.forEach(function(it) {
+          itemsHtml += '<div class="widget-list-item"><span class="wli-name">' + it.name + '</span><span class="wli-count">' + it.count + '</span></div>';
+        });
+        withZero.forEach(function(it) {
+          itemsHtml += '<div class="widget-list-item wli-zero"><span class="wli-name">' + it.name + '</span><span class="wli-count">0</span></div>';
+        });
+      } else {
+        itemsHtml = '<div class="widget-placeholder">Calculez pour voir les données</div>';
+      }
+
+      card.innerHTML = actionsHtml +
+        '<div class="widget-list-body">' +
+        '<div class="widget-list-header">' +
+        '<span class="widget-list-title">' + (w.emoji || '📋') + ' ' + (w.title || 'Liste') + '</span>' +
+        '<span class="widget-list-total">' + totalCount + '</span>' +
+        '</div>' +
+        '<div class="widget-list-items">' + itemsHtml + '</div>' +
+        '</div>' + resizeHtml;
+    }
+
+    if (LAYOUT_MODE) {
+      card.addEventListener('dragstart', handleDragStart);
+      card.addEventListener('dragend', handleDragEnd);
+      card.addEventListener('dragover', handleDragOver);
+      card.addEventListener('drop', handleDrop);
+      card.addEventListener('dragenter', handleDragEnter);
+      card.addEventListener('dragleave', handleDragLeave);
+    }
+
+    grid.appendChild(card);
+  });
+
+  if (LAYOUT_MODE) {
+    initResizeHandles();
+  }
+}
+
+// ============================================================================
+//  DRAG & DROP — Coller ce bloc JUSTE APRÈS la fin de renderWidgetsGrid()
+// ============================================================================
+
+var draggedWidget = null;
+
+function handleDragStart(e) {
+  draggedWidget = this;
+  this.classList.add('dragging');
+  document.getElementById('widgets-grid').classList.add('drag-active');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', this.getAttribute('data-widget-id'));
+}
+
+function handleDragEnd(e) {
+  this.classList.remove('dragging');
+  document.getElementById('widgets-grid').classList.remove('drag-active');
+  document.querySelectorAll('.widget-card.drag-over').forEach(function(el) {
+    el.classList.remove('drag-over');
+  });
+  draggedWidget = null;
+}
+
+function handleDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+}
+
+function handleDragEnter(e) {
+  e.preventDefault();
+  if (this !== draggedWidget) {
+    this.classList.add('drag-over');
+  }
+}
+
+function handleDragLeave(e) {
+  this.classList.remove('drag-over');
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  this.classList.remove('drag-over');
+  
+  if (draggedWidget && this !== draggedWidget) {
+    var fromId = draggedWidget.getAttribute('data-widget-id');
+    var toId = this.getAttribute('data-widget-id');
+    
+    var fromIdx = PLAIDOYER_WIDGETS.findIndex(function(w) { return w.id === fromId; });
+    var toIdx = PLAIDOYER_WIDGETS.findIndex(function(w) { return w.id === toId; });
+    
+    if (fromIdx >= 0 && toIdx >= 0) {
+      // Swap orders
+      var temp = PLAIDOYER_WIDGETS[fromIdx].order;
+      PLAIDOYER_WIDGETS[fromIdx].order = PLAIDOYER_WIDGETS[toIdx].order;
+      PLAIDOYER_WIDGETS[toIdx].order = temp;
+      
+      // If orders were same/undefined, assign sequential
+      PLAIDOYER_WIDGETS.forEach(function(w, i) {
+        if (w.order === undefined) w.order = i;
+      });
+      
+      // Move element in array
+      var item = PLAIDOYER_WIDGETS.splice(fromIdx, 1)[0];
+      PLAIDOYER_WIDGETS.splice(toIdx, 0, item);
+      
+      // Re-assign clean orders
+      PLAIDOYER_WIDGETS.forEach(function(w, i) { w.order = i; });
+      
+      saveWidgetsToStorage();
+      renderWidgetsGrid();
+    }
+  }
+}
+
+function initResizeHandles() {
+  document.querySelectorAll('.widget-resize-handle').forEach(function(handle) {
+    handle.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var widgetId = this.getAttribute('data-widget-id');
+      var card = this.closest('.widget-card');
+      if (!card) return;
+
+      var grid = document.getElementById('widgets-grid');
+      var gridRect = grid.getBoundingClientRect();
+      var colWidth = gridRect.width / 12;
+      var rowHeight = 60 + 16;
+
+      var startX = e.clientX;
+      var startY = e.clientY;
+      var w = PLAIDOYER_WIDGETS.find(function(ww) { return ww.id === widgetId; });
+      if (!w) return;
+      var startColSpan = w.gridColSpan || 3;
+      var startRowSpan = w.gridRowSpan || 2;
+
+      function onMouseMove(ev) {
+        var dx = ev.clientX - startX;
+        var dy = ev.clientY - startY;
+        var newColSpan = Math.max(1, Math.min(12, Math.round(startColSpan + dx / colWidth)));
+        var newRowSpan = Math.max(1, Math.min(8, Math.round(startRowSpan + dy / rowHeight)));
+        card.style.gridColumn = (w.gridCol ? w.gridCol + ' / span ' : 'span ') + newColSpan;
+        card.style.gridRow = (w.gridRow ? w.gridRow + ' / span ' : 'span ') + newRowSpan;
+        card.setAttribute('data-temp-colspan', newColSpan);
+        card.setAttribute('data-temp-rowspan', newRowSpan);
+      }
+
+      function onMouseUp(ev) {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        var finalColSpan = parseInt(card.getAttribute('data-temp-colspan')) || startColSpan;
+        var finalRowSpan = parseInt(card.getAttribute('data-temp-rowspan')) || startRowSpan;
+        w.gridColSpan = finalColSpan;
+        w.gridRowSpan = finalRowSpan;
+        saveWidgetsToStorage();
+        renderWidgetsGrid();
+      }
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+  });
+}
+
+// ============================================================================
+//  PICKER COULEUR
+// ============================================================================
+
+function pickColor(prefix, el) {
+  var picker = document.getElementById(prefix + '-color-picker');
+  picker.querySelectorAll('.widget-color-swatch').forEach(function(s) { s.classList.remove('active'); });
+  el.classList.add('active');
+}
+
+function getSelectedColor(prefix) {
+  var active = document.querySelector('#' + prefix + '-color-picker .widget-color-swatch.active');
+  return active ? active.getAttribute('data-color') : 'teal-1';
+}
+
+// ============================================================================
+//  CHARGEMENT CONFIG ITEMS LAZY
+// ============================================================================
+
+function ensureWidgetConfigItems(callback) {
+  if (WIDGET_CONFIG_ITEMS) {
+    callback();
+    return;
+  }
+  document.getElementById('loader').style.display = 'block';
+  google.script.run.withSuccessHandler(function(data) {
+    document.getElementById('loader').style.display = 'none';
+    WIDGET_CONFIG_ITEMS = data;
+    callback();
+  }).withFailureHandler(function(err) {
+    document.getElementById('loader').style.display = 'none';
+    alert("Erreur chargement config: " + err.message);
+  }).getWidgetConfigItems();
+}
+
+// ============================================================================
+//  MODALE : CRÉER UNE STAT (custom_stat)
+// ============================================================================
+
+var CS_JEUNES_FIELDS = [
+  { value: 'statut_presence', label: 'Statut Présence', configKey: 'STATUT_PRESENCE' },
+  { value: 'statut_mab', label: 'Statut MAB', configKey: 'STATUTS_MAB' },
+  { value: 'nationalite', label: 'Nationalité', configKey: 'NATIONALITES' },
+  { value: 'genre', label: 'Genre', configKey: null },
+  { value: 'lieu_vie', label: 'Lieu de Vie', configKey: 'LIEUX_VIE' },
+  { value: 'vulnerabilites', label: 'Vulnérabilités', configKey: 'VULNERABILITES_TAGS' },
+  { value: 'langue', label: 'Langue', configKey: 'LANGUES' },
+  { value: 'age', label: 'Âge', configKey: null },
+  { value: 'labels', label: 'Labels / Assos', configKey: 'LABELS_CONTACTS_AUTRES' }
+];
+
+var CS_EVENTS_FIELDS = [
+  { value: 'type_evenement', label: "Type d'Événement", configKey: 'TYPES_EVENEMENTS' },
+  { value: 'type_contact', label: 'Type de Contact', configKey: 'TYPES_CONTACT' },
+  { value: 'lieu_event', label: 'Lieu Événement', configKey: 'LIEUX_EVENTS' },
+  { value: 'motif_statut_mab', label: 'Motif Statut MAB', configKey: 'MOTIF_STATUT_MAB' },
+  { value: 'materiel', label: 'Matériel', configKey: 'MATERIEL' }
+];
+
+var CS_OPERATORS = [
+  { value: 'contains', label: 'Contient' },
+  { value: 'equals', label: 'Est exactement' },
+  { value: 'not_contains', label: 'Ne contient pas' },
+  { value: 'not_empty', label: "N'est pas vide" },
+  { value: 'empty', label: 'Est vide' },
+  { value: 'less_than', label: 'Inférieur à' },
+  { value: 'greater_than', label: 'Supérieur à' }
+];
+
+var csConditionCounter = 0;
+
+function openCreateStatModal() {
+  ensureWidgetConfigItems(function() {
+    document.getElementById('cs-title').value = '';
+    document.getElementById('cs-emoji').value = '📊';
+    document.getElementById('cs-colspan').value = 3;
+    document.getElementById('cs-rowspan').value = 2;
+    document.getElementById('cs-result-mode').value = 'jeunes';
+    document.getElementById('cs-conditions-list').innerHTML = '';
+    csConditionCounter = 0;
+    // Reset color
+    document.querySelectorAll('#cs-color-picker .widget-color-swatch').forEach(function(s) { s.classList.remove('active'); });
+    document.querySelector('#cs-color-picker .wc-teal-1').classList.add('active');
+    updateCSAutoInfo();
+    // Ajouter une première condition par défaut
+    addCSCondition('jeunes');
+    modalCreateStatInstance.show();
+  });
+}
+
+function addCSCondition(source) {
+  csConditionCounter++;
+  var id = 'csc_' + csConditionCounter;
+  var fields = source === 'jeunes' ? CS_JEUNES_FIELDS : CS_EVENTS_FIELDS;
+  var badgeClass = source === 'jeunes' ? 'source-jeunes' : 'source-events';
+  var badgeLabel = source === 'jeunes' ? '👤 Personne' : '📅 Événement';
+
+  var fieldsOptions = '';
+  fields.forEach(function(f) {
+    fieldsOptions += '<option value="' + f.value + '">' + f.label + '</option>';
+  });
+
+  var operatorsOptions = '';
+  CS_OPERATORS.forEach(function(op) {
+    operatorsOptions += '<option value="' + op.value + '">' + op.label + '</option>';
+  });
+
+  var activeOnlyHtml = '';
+  if (source === 'jeunes') {
+    activeOnlyHtml = '<label style="font-size:0.72rem; white-space:nowrap; display:flex; align-items:center; gap:3px;">' +
+      '<input type="checkbox" checked class="cs-active-only" style="width:14px;height:14px;"> Actifs</label>';
+  }
+
+  var html = '<div class="cs-condition-row" id="' + id + '" data-source="' + source + '">' +
+    '<span class="cs-source-badge ' + badgeClass + '">' + badgeLabel + '</span>' +
+    '<select class="cs-field-select" onchange="updateCSConditionSuggestions(\'' + id + '\')">' + fieldsOptions + '</select>' +
+    '<select class="cs-operator-select">' + operatorsOptions + '</select>' +
+    '<input type="text" class="cs-value-input" placeholder="Valeur..." list="' + id + '_dl">' +
+    '<datalist id="' + id + '_dl"></datalist>' +
+    activeOnlyHtml +
+    '<button class="cs-remove-btn" onclick="removeCSCondition(\'' + id + '\')" title="Supprimer"><i class="fas fa-times"></i></button>' +
+    '</div>';
+
+  document.getElementById('cs-conditions-list').insertAdjacentHTML('beforeend', html);
+  updateCSConditionSuggestions(id);
+  updateCSAutoInfo();
+}
+
+function removeCSCondition(id) {
+  var el = document.getElementById(id);
+  if (el) el.remove();
+  updateCSAutoInfo();
+}
+
+function updateCSConditionSuggestions(condId) {
+  var row = document.getElementById(condId);
+  if (!row) return;
+  var source = row.getAttribute('data-source');
+  var fieldVal = row.querySelector('.cs-field-select').value;
+  var fields = source === 'jeunes' ? CS_JEUNES_FIELDS : CS_EVENTS_FIELDS;
+  var fieldDef = fields.find(function(f) { return f.value === fieldVal; });
+  var datalist = document.getElementById(condId + '_dl');
+  datalist.innerHTML = '';
+
+  if (fieldDef && fieldDef.configKey && WIDGET_CONFIG_ITEMS) {
+    var items = WIDGET_CONFIG_ITEMS[fieldDef.configKey] || [];
+    items.forEach(function(it) {
+      if (!it.isSeparator) {
+        datalist.innerHTML += '<option value="' + it.value + '">';
+      }
+    });
+  }
+}
+
+function updateCSAutoInfo() {
+  var rows = document.querySelectorAll('#cs-conditions-list .cs-condition-row');
+  var hasJeunes = false, hasEvents = false;
+  rows.forEach(function(r) {
+    if (r.getAttribute('data-source') === 'jeunes') hasJeunes = true;
+    if (r.getAttribute('data-source') === 'events') hasEvents = true;
+  });
+
+  var text = '';
+  if (!hasJeunes && !hasEvents) {
+    text = 'Ajoutez des conditions pour définir votre requête.';
+  } else if (hasJeunes && !hasEvents) {
+    text = '🟢 Calcul sur les <strong>fiches personnes</strong> (stock actuel).';
+  } else if (!hasJeunes && hasEvents) {
+    text = '🟡 Calcul sur les <strong>événements</strong> de la période sélectionnée.';
+  } else {
+    text = '🔵 Calcul <strong>croisé</strong> : filtre les personnes, puis cherche les événements correspondants sur la période.';
+  }
+  document.getElementById('cs-auto-info-text').innerHTML = text;
+}
+
+function saveCreateStatWidget() {
+  var title = document.getElementById('cs-title').value.trim();
+  if (!title) { alert("Donnez un titre."); return; }
+
+  var conditions = [];
+  document.querySelectorAll('#cs-conditions-list .cs-condition-row').forEach(function(row) {
+    var source = row.getAttribute('data-source');
+    var field = row.querySelector('.cs-field-select').value;
+    var operator = row.querySelector('.cs-operator-select').value;
+    var value = row.querySelector('.cs-value-input').value;
+    var activeOnlyCb = row.querySelector('.cs-active-only');
+    var activeOnly = activeOnlyCb ? activeOnlyCb.checked : false;
+
+    conditions.push({
+      source: source,
+      field: field,
+      operator: operator,
+      value: value,
+      activeOnly: activeOnly
+    });
+  });
+
+  if (conditions.length === 0) { alert("Ajoutez au moins une condition."); return; }
+
+  var csColSpan = parseInt(document.getElementById('cs-colspan').value) || 3;
+  var csRowSpan = parseInt(document.getElementById('cs-rowspan').value) || 2;
+  var w = {
+    id: generateWidgetId(),
+    type: 'custom_stat',
+    title: title,
+    emoji: document.getElementById('cs-emoji').value || '📊',
+    color: getSelectedColor('cs'),
+    gridColSpan: Math.max(1, Math.min(12, csColSpan)),
+    gridRowSpan: Math.max(1, Math.min(8, csRowSpan)),
+    order: PLAIDOYER_WIDGETS.length,
+    conditions: conditions,
+    resultMode: document.getElementById('cs-result-mode').value
+  };
+
+  PLAIDOYER_WIDGETS.push(w);
+  saveWidgetsToStorage();
+  renderWidgetsGrid();
+  modalCreateStatInstance.hide();
+}
+
+// ============================================================================
+//  MODALE : AJOUTER UNE STAT (single_item)
+// ============================================================================
+
+var ASI_SUBCARDS = [
+  { value: 'presents', label: 'Présents' },
+  { value: 'mineurs_moins_15', label: 'Moins de 15 ans' },
+  { value: 'filles', label: 'Filles' },
+  { value: 'nouveaux', label: 'Nouveaux (période)' }
+];
+
+function openAddSingleItemModal() {
+  ensureWidgetConfigItems(function() {
+    var catSelect = document.getElementById('asi-category');
+    catSelect.innerHTML = '<option value="">— Choisir —</option><option value="_subcards">Indicateurs Globaux</option>';
+    // Ajouter toutes les catégories de STATS_LIST_CONFIG
+    STATS_LIST_CONFIG.forEach(function(cfg) {
+      catSelect.innerHTML += '<option value="' + cfg.key + '">' + cfg.label + '</option>';
+    });
+    document.getElementById('asi-item').innerHTML = '<option value="">— Choisir une catégorie —</option>';
+    document.getElementById('asi-title').value = '';
+    document.getElementById('asi-emoji').value = '📈';
+    document.getElementById('asi-colspan').value = 2;
+    document.getElementById('asi-rowspan').value = 2;
+    document.querySelectorAll('#asi-color-picker .widget-color-swatch').forEach(function(s) { s.classList.remove('active'); });
+    document.querySelector('#asi-color-picker .wc-teal-1').classList.add('active');
+    modalAddSingleItemInstance.show();
+  });
+}
+
+function updateASIItems() {
+  var cat = document.getElementById('asi-category').value;
+  var itemSelect = document.getElementById('asi-item');
+  itemSelect.innerHTML = '';
+
+  if (cat === '_subcards') {
+    ASI_SUBCARDS.forEach(function(sc) {
+      itemSelect.innerHTML += '<option value="' + sc.value + '">' + sc.label + '</option>';
+    });
+  } else if (cat) {
+    var cfg = STATS_LIST_CONFIG.find(function(c) { return c.key === cat; });
+    if (cfg && WIDGET_CONFIG_ITEMS && WIDGET_CONFIG_ITEMS[cfg.configKey]) {
+      WIDGET_CONFIG_ITEMS[cfg.configKey].forEach(function(it) {
+        if (it.isSeparator) {
+          itemSelect.innerHTML += '<option disabled>── ' + it.label + ' ──</option>';
+        } else {
+          itemSelect.innerHTML += '<option value="' + it.value + '">' + it.value + '</option>';
+        }
+      });
+    }
+  }
+}
+
+function saveSingleItemWidget() {
+  var cat = document.getElementById('asi-category').value;
+  var item = document.getElementById('asi-item').value;
+  if (!cat || !item) { alert("Choisissez une catégorie et un item."); return; }
+
+  var title = document.getElementById('asi-title').value.trim() || item;
+
+  var asiColSpan = parseInt(document.getElementById('asi-colspan').value) || 2;
+  var asiRowSpan = parseInt(document.getElementById('asi-rowspan').value) || 2;
+  var w = {
+    id: generateWidgetId(),
+    type: 'single_item',
+    title: title,
+    emoji: document.getElementById('asi-emoji').value || '📈',
+    color: getSelectedColor('asi'),
+    gridColSpan: Math.max(1, Math.min(12, asiColSpan)),
+    gridRowSpan: Math.max(1, Math.min(8, asiRowSpan)),
+    order: PLAIDOYER_WIDGETS.length,
+    category: cat,
+    item: item
+  };
+
+  PLAIDOYER_WIDGETS.push(w);
+  saveWidgetsToStorage();
+  renderWidgetsGrid();
+  modalAddSingleItemInstance.hide();
+}
+
+// ============================================================================
+//  MODALE : AJOUTER UNE LISTE (item_list)
+// ============================================================================
+
+function openAddItemListModal() {
+  ensureWidgetConfigItems(function() {
+    document.getElementById('ail-title').value = '';
+    document.getElementById('ail-emoji').value = '📋';
+    document.getElementById('ail-colspan').value = 4;
+    document.getElementById('ail-rowspan').value = 3;
+    document.querySelectorAll('#ail-color-picker .widget-color-swatch').forEach(function(s) { s.classList.remove('active'); });
+    document.querySelector('#ail-color-picker .wc-teal-1').classList.add('active');
+    buildItemListSelector();
+    modalAddItemListInstance.show();
+  });
+}
+
+function buildItemListSelector() {
+  var selector = document.getElementById('ail-items-selector');
+  selector.innerHTML = '';
+
+  // Subcards
+  var subHtml = '<div class="favori-category" data-cat-id="ail-cat-sub">' +
+    '<div class="favori-category-title">Indicateurs Globaux <button type="button" class="cat-check-all-btn" onclick="ailToggleCat(\'ail-cat-sub\')">tout</button></div>';
+  ASI_SUBCARDS.forEach(function(sc) {
+    subHtml += '<div class="favori-item-check">' +
+      '<input type="checkbox" id="ail_sub_' + sc.value + '" data-category="_subcards" data-name="' + sc.value + '" data-label="' + sc.label + '" class="ail-check">' +
+      '<label for="ail_sub_' + sc.value + '">' + sc.label + '</label></div>';
+  });
+  subHtml += '</div>';
+  selector.innerHTML += subHtml;
+
+  // All categories
+  STATS_LIST_CONFIG.forEach(function(cfg) {
+    if (!WIDGET_CONFIG_ITEMS || !WIDGET_CONFIG_ITEMS[cfg.configKey]) return;
+    var items = WIDGET_CONFIG_ITEMS[cfg.configKey];
+    var catId = 'ail-cat-' + cfg.key;
+    var catHtml = '<div class="favori-category" data-cat-id="' + catId + '">' +
+      '<div class="favori-category-title">' + cfg.label + ' <button type="button" class="cat-check-all-btn" onclick="ailToggleCat(\'' + catId + '\')">tout</button></div>';
+    items.forEach(function(it, idx) {
+      if (it.isSeparator) {
+        catHtml += '<div class="favori-item-check" style="pointer-events:none;opacity:0.5;font-weight:700;font-size:0.72rem;padding:6px 8px;">' + it.label + '</div>';
+      } else {
+        var safeId = 'ail_' + cfg.key + '_' + idx;
+        catHtml += '<div class="favori-item-check">' +
+          '<input type="checkbox" id="' + safeId + '" data-category="' + cfg.key + '" data-name="' + it.value + '" class="ail-check">' +
+          '<label for="' + safeId + '">' + it.value + '</label></div>';
+      }
+    });
+    catHtml += '</div>';
+    selector.innerHTML += catHtml;
+  });
+}
+
+// Tout cocher/décocher pour une catégorie
+function ailToggleCat(catId) {
+  var catDiv = document.querySelector('[data-cat-id="' + catId + '"]');
+  if (!catDiv) return;
+  var checks = catDiv.querySelectorAll('input.ail-check');
+  var allChecked = true;
+  checks.forEach(function(cb) { if (!cb.checked) allChecked = false; });
+  checks.forEach(function(cb) { cb.checked = !allChecked; });
+}
+
+// Tout cocher/décocher global
+function ailCheckAll(state) {
+  document.querySelectorAll('#ail-items-selector input.ail-check').forEach(function(cb) {
+    cb.checked = state;
+  });
+}
+
+function saveItemListWidget() {
+  var title = document.getElementById('ail-title').value.trim();
+  if (!title) { alert("Donnez un titre."); return; }
+
+  var items = [];
+  document.querySelectorAll('#ail-items-selector input[type="checkbox"]:checked').forEach(function(cb) {
+    var cat = cb.getAttribute('data-category');
+    var nm = cb.getAttribute('data-name');
+    var lbl = cb.getAttribute('data-label') || nm;
+    if (cat === '_subcards') {
+      items.push({ category: cat, name: nm, label: lbl });
+    } else {
+      items.push({ category: cat, name: nm });
+    }
+  });
+  if (items.length === 0) { alert("Sélectionnez au moins un item."); return; }
+
+  var ailColSpan = parseInt(document.getElementById('ail-colspan').value) || 4;
+  var ailRowSpan = parseInt(document.getElementById('ail-rowspan').value) || 3;
+  var w = {
+    id: generateWidgetId(),
+    type: 'item_list',
+    title: title,
+    emoji: document.getElementById('ail-emoji').value || '📋',
+    color: getSelectedColor('ail'),
+    gridColSpan: Math.max(1, Math.min(12, ailColSpan)),
+    gridRowSpan: Math.max(1, Math.min(8, ailRowSpan)),
+    order: PLAIDOYER_WIDGETS.length,
+    items: items
+  };
+
+  PLAIDOYER_WIDGETS.push(w);
+  saveWidgetsToStorage();
+  renderWidgetsGrid();
+  modalAddItemListInstance.hide();
+}
+
+// ============================================================================
+//  MODALE : ÉDITER WIDGET
+// ============================================================================
+
+function openEditWidget(widgetId) {
+  var w = PLAIDOYER_WIDGETS.find(function(ww) { return ww.id === widgetId; });
+  if (!w) return;
+
+  document.getElementById('ew-id').value = w.id;
+  document.getElementById('ew-title').value = w.title || '';
+  document.getElementById('ew-emoji').value = w.emoji || '';
+  document.getElementById('ew-colspan').value = w.gridColSpan || 3;
+  document.getElementById('ew-rowspan').value = w.gridRowSpan || 2;
+  document.getElementById('ew-order').value = w.order || 0;
+
+  document.querySelectorAll('#ew-color-picker .widget-color-swatch').forEach(function(s) { s.classList.remove('active'); });
+  var colorEl = document.querySelector('#ew-color-picker .wc-' + (w.color || 'teal-1'));
+  if (colorEl) colorEl.classList.add('active');
+
+  modalEditWidgetInstance.show();
+}
+
+function saveEditWidget() {
+  var id = document.getElementById('ew-id').value;
+  var w = PLAIDOYER_WIDGETS.find(function(ww) { return ww.id === id; });
+  if (!w) return;
+
+  w.title = document.getElementById('ew-title').value.trim() || w.title;
+  w.emoji = document.getElementById('ew-emoji').value || w.emoji;
+  w.gridColSpan = Math.max(1, Math.min(12, parseInt(document.getElementById('ew-colspan').value) || 3));
+  w.gridRowSpan = Math.max(1, Math.min(8, parseInt(document.getElementById('ew-rowspan').value) || 2));
+  w.color = getSelectedColor('ew');
+  w.order = parseInt(document.getElementById('ew-order').value) || 0;
+
+  saveWidgetsToStorage();
+  renderWidgetsGrid();
+  modalEditWidgetInstance.hide();
+}
+
+function deleteWidgetFromEdit() {
+  if (!confirm("Supprimer ce widget ?")) return;
+  var id = document.getElementById('ew-id').value;
+  PLAIDOYER_WIDGETS = PLAIDOYER_WIDGETS.filter(function(w) { return w.id !== id; });
+  delete WIDGET_RESULTS[id];
+  saveWidgetsToStorage();
+  renderWidgetsGrid();
+  modalEditWidgetInstance.hide();
+}
+
+// ============================================================================
+//  MODALE : COPIER WIDGETS
+// ============================================================================
+
+function openCopyWidgetsModal() {
+  var container = document.getElementById('copy-widgets-list');
+  container.innerHTML = '';
+
+  if (PLAIDOYER_WIDGETS.length === 0) {
+    container.innerHTML = '<p class="text-muted text-center py-3">Aucun widget à copier.</p>';
+    modalCopyWidgetsInstance.show();
+    return;
+  }
+
+  PLAIDOYER_WIDGETS.forEach(function(w) {
+    var typeLabel = w.type === 'custom_stat' ? 'Stat' : w.type === 'single_item' ? 'Item' : 'Liste';
+    container.innerHTML += '<label class="copy-widget-item">' +
+      '<input type="checkbox" value="' + w.id + '" checked>' +
+      '<span class="cwi-title">' + (w.emoji || '') + ' ' + (w.title || 'Sans titre') + '</span>' +
+      '<span class="cwi-type">' + typeLabel + '</span>' +
+      '</label>';
+  });
+  modalCopyWidgetsInstance.show();
+}
+
+function copyAllWidgets() {
+  var text = buildCopyText(PLAIDOYER_WIDGETS.map(function(w) { return w.id; }));
+  copyToClipboard(text);
+  alert("Tous les widgets copiés !");
+}
+
+function copySelectedWidgets() {
+  var ids = [];
+  document.querySelectorAll('#copy-widgets-list input[type="checkbox"]:checked').forEach(function(cb) {
+    ids.push(cb.value);
+  });
+  if (ids.length === 0) { alert("Sélectionnez au moins un widget."); return; }
+  var text = buildCopyText(ids);
+  copyToClipboard(text);
+  alert(ids.length + " widget(s) copié(s) !");
+}
+
+function buildCopyText(widgetIds) {
+  var lines = ['--- Plaidoyer TAMABochi ---'];
+  var start = document.getElementById('stats-start').value;
+  var end = document.getElementById('stats-end').value;
+  if (start && end) lines.push('Période : ' + start + ' → ' + end);
+  lines.push('');
+
+  widgetIds.forEach(function(wid) {
+    var w = PLAIDOYER_WIDGETS.find(function(ww) { return ww.id === wid; });
+    if (!w) return;
+    var result = WIDGET_RESULTS[wid];
+
+    if (w.type === 'single_item' || w.type === 'custom_stat') {
+      var val = result ? (result.value !== undefined ? result.value : '?') : '?';
+      var pct = (result && result.percentage !== undefined) ? ' (' + result.percentage + '%)' : '';
+      lines.push((w.emoji || '') + ' ' + w.title + ' : ' + val + pct);
+    } else if (w.type === 'item_list') {
+      lines.push((w.emoji || '') + ' ' + w.title + ' :');
+      if (result && result.items) {
+        result.items.forEach(function(it) {
+          lines.push('  - ' + it.name + ' : ' + it.count);
+        });
+      }
+      lines.push('');
+    }
+  });
+
+  return lines.join('\n');
+}
+
+function copyToClipboard(text) {
+  var el = document.createElement('textarea');
+  el.value = text;
+  document.body.appendChild(el);
+  el.select();
+  document.execCommand('copy');
+  document.body.removeChild(el);
+}
+
+// ============================================================================
+//  MODALE : CONFIG VIEWER (toutes les listes BDD_CONFIG)
+// ============================================================================
+
+function openConfigViewerModal() {
+  var container = document.getElementById('config-viewer-content');
+
+  if (!GLOBAL_STATS_DETAILED) {
+    container.innerHTML = '<p class="text-muted text-center py-4"><i class="fas fa-info-circle me-1"></i> Calculez les statistiques d\'abord pour voir les chiffres.</p>';
+    modalConfigViewerInstance.show();
+    return;
+  }
+
+  ensureWidgetConfigItems(function() {
+    container.innerHTML = '';
+    var stats = GLOBAL_STATS_DETAILED;
+
+    STATS_LIST_CONFIG.forEach(function(cfg) {
+      var statsData = stats[cfg.key] || {};
+      var configItems = (WIDGET_CONFIG_ITEMS && WIDGET_CONFIG_ITEMS[cfg.configKey]) ? WIDGET_CONFIG_ITEMS[cfg.configKey] : [];
+
+      var itemsHtml = '';
+      configItems.forEach(function(it) {
+        if (it.isSeparator) {
+          itemsHtml += '<div class="clc-item clc-separator">' + it.label + '</div>';
+        } else {
+          var count = statsData[it.value] || 0;
+          var zeroClass = count === 0 ? 'clc-zero' : '';
+          itemsHtml += '<div class="clc-item ' + zeroClass + '"><span>' + it.value + '</span><span class="clc-count">' + count + '</span></div>';
+        }
+      });
+
+      // Also show orphans (items in data but not in config)
+      for (var dataItem in statsData) {
+        if (statsData.hasOwnProperty(dataItem)) {
+          var inConfig = configItems.some(function(ci) { return ci.value === dataItem; });
+          if (!inConfig && statsData[dataItem] > 0) {
+            itemsHtml += '<div class="clc-item"><span>' + dataItem + ' <small class="text-warning">(orphelin)</small></span><span class="clc-count">' + statsData[dataItem] + '</span></div>';
+          }
+        }
+      }
+
+      if (configItems.length === 0 && Object.keys(statsData).length === 0) return;
+
+      var cardDiv = document.createElement('div');
+      cardDiv.className = 'config-list-card';
+      cardDiv.innerHTML = '<div class="clc-header" onclick="this.parentElement.classList.toggle(\'clc-collapsed\')">' +
+        '<span><i class="fas ' + cfg.icon + ' me-2"></i>' + cfg.label + '</span>' +
+        '<i class="fas fa-chevron-down" style="font-size:0.7rem;color:#999"></i>' +
+        '</div>' +
+        '<div class="clc-body">' + itemsHtml + '</div>';
+      container.appendChild(cardDiv);
+    });
+
+    modalConfigViewerInstance.show();
+  });
+}
+
+// ============================================================================
+// PHASE 4 : DASHBOARD WIDGETS
+// ============================================================================
+
+// Variables globales dashboard widgets
+var DASHBOARD_WIDGETS = [];
+var DASH_WIDGET_DATA = {}; // cache des données chargées
+var DASH_LAYOUT_MODE = false;
+var DASH_SELECTED_TYPE = '';
+var modalAddDashWidgetInstance, modalEditDashWidgetInstance;
+var dashDraggedWidget = null;
+
+// ============================================================================
+//  STOCKAGE DASHBOARD WIDGETS (localStorage)
+// ============================================================================
+
+function loadDashWidgetsFromStorage(callback) {
+  var userEmail = CURRENT_USER ? CURRENT_USER.loginEmail : '';
+  if (!userEmail) { DASHBOARD_WIDGETS = []; if (callback) callback(); return; }
+  
+  google.script.run.withSuccessHandler(function(json) {
+    try {
+      DASHBOARD_WIDGETS = json ? JSON.parse(json) : [];
+      DASHBOARD_WIDGETS.forEach(function(w) {
+        if (!w.gridColSpan) { w.gridColSpan = 3; w.gridRowSpan = 2; }
+      });
+    } catch(e) { DASHBOARD_WIDGETS = []; }
+    if (callback) callback();
+  }).withFailureHandler(function(err) {
+    console.error("Erreur chargement dash widgets:", err);
+    DASHBOARD_WIDGETS = [];
+    if (callback) callback();
+  }).loadUserPref(userEmail, 'dashboard_widgets');
+}
+
+var _saveDashTimeout = null;
+function saveDashWidgetsToStorage() {
+  clearTimeout(_saveDashTimeout);
+  _saveDashTimeout = setTimeout(function() {
+    var userEmail = CURRENT_USER ? CURRENT_USER.loginEmail : '';
+    if (!userEmail) return;
+    try {
+      var json = JSON.stringify(DASHBOARD_WIDGETS);
+      google.script.run.withFailureHandler(function(err) {
+        console.error("Erreur sauvegarde dash widgets:", err);
+      }).saveUserPref(userEmail, 'dashboard_widgets', json);
+    } catch(e) { console.error("Erreur sauvegarde dash widgets:", e); }
+  }, 500);
+}
+
+function generateDashWidgetId() {
+  return 'dw_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+}
+
+// ============================================================================
+//  CHARGEMENT & RENDU DU DASHBOARD
+// ============================================================================
+
+// Remplace l'ancien loadDashboard
+function loadDashboard() {
+  if (!modalAddDashWidgetInstance) {
+    modalAddDashWidgetInstance = new bootstrap.Modal(document.getElementById('modalAddDashWidget'));
+    modalEditDashWidgetInstance = new bootstrap.Modal(document.getElementById('modalEditDashWidget'));
+  }
+  
+  loadDashWidgetsFromStorage(function() {
+    renderDashboardWidgets();
+    refreshDashboardWidgets();
+  });
+}
+
+function refreshDashboardWidgets() {
+  if (DASHBOARD_WIDGETS.length === 0) return;
+  
+  DASH_WIDGET_DATA = {};
+  
+  // Check if we need stats data
+  var needsStats = DASHBOARD_WIDGETS.some(function(w) { return w.type === 'dash_stat'; });
+  var needsRappels = DASHBOARD_WIDGETS.some(function(w) { return w.type === 'dash_rappels'; });
+  var needsJeune = DASHBOARD_WIDGETS.some(function(w) { return w.type === 'dash_jeune'; });
+  
+  // Load rappels data
+  if (needsRappels) {
+    google.script.run.withSuccessHandler(function(data) {
+      DASH_WIDGET_DATA._rappels = data;
+      // Also update sidebar badge
+      updateSidebarBadge(data.enRetard || 0);
+      renderDashboardWidgets();
+    }).getDashboardRappelsSummary();
+  }
+  
+  // Also load basic rappels for sidebar badge if no rappels widget
+  if (!needsRappels) {
+    google.script.run.withSuccessHandler(function(r) {
+      var lateCount = 0;
+      if (r && r.length) r.forEach(function(item) { if (item.isLate) lateCount++; });
+      updateSidebarBadge(lateCount);
+    }).getRappels();
+  }
+  
+  // Load stats for stat widgets
+  if (needsStats && PLAIDOYER_WIDGETS.length > 0) {
+    var now = new Date();
+    var startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().substring(0, 10);
+    var todayStr = now.toISOString().substring(0, 10);
+    
+    // Get widgets that are referenced from plaidoyer
+    var statWidgets = DASHBOARD_WIDGETS.filter(function(w) { return w.type === 'dash_stat' && w.sourceWidgetId; });
+    var plaidoyerWidgetDefs = [];
+    statWidgets.forEach(function(dw) {
+      var pw = PLAIDOYER_WIDGETS.find(function(p) { return p.id === dw.sourceWidgetId; });
+      if (pw) plaidoyerWidgetDefs.push(pw);
+    });
+    
+    if (plaidoyerWidgetDefs.length > 0) {
+      google.script.run.withSuccessHandler(function(results) {
+        DASH_WIDGET_DATA._stats = results;
+        renderDashboardWidgets();
+      }).computeAllWidgets(plaidoyerWidgetDefs, startOfMonth, todayStr);
+    }
+  }
+  
+  // Also load month stats for legacy compatibility
+  var now2 = new Date();
+  var startOfMonth2 = new Date(now2.getFullYear(), now2.getMonth(), 1).toISOString().substring(0, 10);
+  var todayStr2 = now2.toISOString().substring(0, 10);
+  google.script.run.withSuccessHandler(function(stats) {
+    DASH_WIDGET_DATA._monthStats = stats;
+    renderDashboardWidgets();
+  }).getStatistics(startOfMonth2, todayStr2);
+  
+  // Load pinned jeune data
+  if (needsJeune) {
+    DASHBOARD_WIDGETS.forEach(function(w) {
+      if (w.type === 'dash_jeune' && w.jeuneId) {
+        google.script.run.withSuccessHandler(function(data) {
+          if (data.success) {
+            DASH_WIDGET_DATA['jeune_' + w.jeuneId] = data.jeune;
+            renderDashboardWidgets();
+          }
+        }).getDashboardJeuneCard(w.jeuneId);
+      }
+    });
+  }
+  
+  // Load rappels en retard par jeune for indicators
+  google.script.run.withSuccessHandler(function(map) {
+    RAPPELS_RETARD_MAP = map || {};
+  }).getRappelsEnRetardParJeune();
+}
+
+function renderDashboardWidgets() {
+  var grid = document.getElementById('dashboard-widgets-grid');
+  var empty = document.getElementById('dash-widgets-empty');
+  grid.innerHTML = '';
+  
+  if (DASHBOARD_WIDGETS.length === 0) {
+    grid.appendChild(empty);
+    empty.style.display = '';
+    return;
+  }
+  
+  var sorted = DASHBOARD_WIDGETS.slice().sort(function(a, b) {
+    return (a.order || 0) - (b.order || 0);
+  });
+  
+  sorted.forEach(function(w) {
+    var colorClass = 'wc-' + (w.color || 'teal-1');
+    var card = document.createElement('div');
+    card.className = 'dash-widget-card ' + colorClass;
+    card.setAttribute('data-dw-id', w.id);
+    
+    var colSpan = w.gridColSpan || 3;
+    var rowSpan = w.gridRowSpan || 2;
+    card.style.gridColumn = 'span ' + colSpan;
+    card.style.gridRow = 'span ' + rowSpan;
+    
+    if (DASH_LAYOUT_MODE) {
+      card.setAttribute('draggable', 'true');
+    }
+    
+    var actionsHtml = '<div class="dash-widget-actions">' +
+      '<button class="dash-widget-action-btn" onclick="event.stopPropagation(); openEditDashWidget(\'' + w.id + '\')" title="Modifier"><i class="fas fa-pen"></i></button>' +
+      '</div>';
+    
+    var resizeHtml = '<div class="dash-resize-handle" data-dw-id="' + w.id + '"></div>';
+    
+    // Render based on type
+    if (w.type === 'dash_stat') {
+      card.innerHTML = actionsHtml + renderDashStatWidget(w) + resizeHtml;
+    } else if (w.type === 'dash_rappels') {
+      card.innerHTML = actionsHtml + renderDashRappelsWidget(w) + resizeHtml;
+    } else if (w.type === 'dash_action') {
+      card.innerHTML = actionsHtml + renderDashActionWidget(w) + resizeHtml;
+      card.style.cursor = 'pointer';
+      // Add click handler for actions
+      (function(action) {
+        card.addEventListener('click', function(e) {
+          if (e.target.closest('.dash-widget-actions')) return;
+          executeDashAction(action);
+        });
+      })(w.actionType);
+    } else if (w.type === 'dash_jeune') {
+      card.innerHTML = actionsHtml + renderDashJeuneWidget(w) + resizeHtml;
+      card.style.cursor = 'pointer';
+      (function(jId) {
+        card.addEventListener('click', function(e) {
+          if (e.target.closest('.dash-widget-actions')) return;
+          ouvrirFiche(jId, 'dashboard');
+        });
+      })(w.jeuneId);
+    }
+    
+    if (DASH_LAYOUT_MODE) {
+      card.addEventListener('dragstart', handleDashDragStart);
+      card.addEventListener('dragend', handleDashDragEnd);
+      card.addEventListener('dragover', handleDashDragOver);
+      card.addEventListener('drop', handleDashDrop);
+      card.addEventListener('dragenter', handleDashDragEnter);
+      card.addEventListener('dragleave', handleDashDragLeave);
+    }
+    
+    grid.appendChild(card);
+  });
+  
+  if (DASH_LAYOUT_MODE) {
+    initDashResizeHandles();
+  }
+}
+
+// ============================================================================
+//  RENDU DE CHAQUE TYPE DE WIDGET
+// ============================================================================
+
+function renderDashStatWidget(w) {
+  var value = '—';
+  var pctHtml = '';
+  
+  if (w.sourceWidgetId && DASH_WIDGET_DATA._stats) {
+    var result = DASH_WIDGET_DATA._stats[w.sourceWidgetId];
+    if (result) {
+      value = result.value !== undefined ? result.value : '—';
+      if (result.percentage !== undefined) {
+        pctHtml = '<div class="dw-title" style="opacity:0.6; font-size:0.6rem;">' + result.percentage + '%</div>';
+      }
+    }
+  }
+  // Fallback: use month stats for basic subcards
+  if (value === '—' && w.statKey && DASH_WIDGET_DATA._monthStats) {
+    var ms = DASH_WIDGET_DATA._monthStats;
+    if (ms[w.statKey] !== undefined) value = ms[w.statKey];
+  }
+  
+  return '<div class="dash-widget-stat-body">' +
+    '<div class="dw-emoji">' + (w.emoji || '📊') + '</div>' +
+    '<div class="dw-value">' + value + '</div>' +
+    '<div class="dw-title">' + (w.title || 'Stat') + '</div>' +
+    pctHtml +
+    '</div>';
+}
+
+function renderDashRappelsWidget(w) {
+  var data = DASH_WIDGET_DATA._rappels;
+  if (!data) {
+    return '<div class="dash-widget-rappels">' +
+      '<div class="dw-rappels-header"><span class="dw-rappels-title">' + (w.emoji || '🔔') + ' ' + (w.title || 'Rappels') + '</span></div>' +
+      '<div class="dw-rappels-list" style="display:flex;align-items:center;justify-content:center;"><span style="opacity:0.5;font-size:0.8rem;">Chargement...</span></div></div>';
+  }
+  
+  var countsHtml = '<div class="dw-rappels-counts">';
+  if (data.enRetard > 0) countsHtml += '<span class="dw-count-late">⚠ ' + data.enRetard + ' en retard</span>';
+  countsHtml += '<span class="dw-count-todo">' + data.aFaire + ' à faire</span></div>';
+  
+  var listHtml = '';
+  if (data.prochains && data.prochains.length > 0) {
+    data.prochains.forEach(function(r) {
+      var lateClass = r.isLate ? 'dw-ri-late' : '';
+      listHtml += '<div class="dw-rappel-item ' + lateClass + '" onclick="ouvrirFicheDepuisRappel(\'' + r.idJeune + '\')">' +
+        '<span class="dw-ri-name">' + (r.isLate ? '🔴 ' : '') + r.titre + ' — ' + r.nomJeune + '</span>' +
+        '<span class="dw-ri-date">' + r.date + '</span></div>';
+    });
+  } else {
+    listHtml = '<div style="text-align:center;padding:10px;opacity:0.5;font-size:0.75rem;">Aucun rappel</div>';
+  }
+  
+  return '<div class="dash-widget-rappels">' +
+    '<div class="dw-rappels-header">' +
+    '<span class="dw-rappels-title">' + (w.emoji || '🔔') + ' ' + (w.title || 'Rappels') + '</span>' +
+    countsHtml + '</div>' +
+    '<div class="dw-rappels-list">' + listHtml + '</div></div>';
+}
+
+function renderDashActionWidget(w) {
+  var icons = {
+    'new_jeune': 'fa-user-plus',
+    'search': 'fa-search',
+    'eviction': 'fa-house-chimney-crack',
+    'stats': 'fa-chart-pie',
+    'rappels': 'fa-bell'
+  };
+  var icon = icons[w.actionType] || 'fa-bolt';
+  
+  return '<div class="dash-widget-action">' +
+    '<div class="dw-action-icon"><i class="fas ' + icon + '"></i></div>' +
+    '<div class="dw-action-label">' + (w.title || w.actionType) + '</div></div>';
+}
+
+function renderDashJeuneWidget(w) {
+  var j = DASH_WIDGET_DATA['jeune_' + w.jeuneId];
+  if (!j) {
+    return '<div class="dash-widget-jeune">' +
+      '<div class="dw-jeune-header"><div class="dw-jeune-avatar"><i class="fas fa-user"></i></div>' +
+      '<div><div class="dw-jeune-name">Chargement...</div></div></div></div>';
+  }
+  
+  var vulnsHtml = '';
+  if (j.vulnerabilites) {
+    var vulnList = j.vulnerabilites.split(',').slice(0, 3);
+    vulnsHtml = '<div class="dw-jeune-vulns">' + vulnList.map(function(v) { return v.trim(); }).join(' · ') + '</div>';
+  }
+  
+  return '<div class="dash-widget-jeune">' +
+    '<div class="dw-jeune-header">' +
+    '<div class="dw-jeune-avatar"><i class="fas fa-user"></i></div>' +
+    '<div><div class="dw-jeune-name">' + j.nom + '</div>' +
+    '<div class="dw-jeune-subtitle">' + (j.surnom || '') + '</div></div></div>' +
+    '<div class="dw-jeune-body">' +
+    '<div class="dw-jeune-info">' +
+    '<span class="dw-jeune-tag">' + (j.age || '?') + ' ans</span>' +
+    '<span class="dw-jeune-tag">' + (j.nationalite || '?') + '</span>' +
+    '<span class="dw-jeune-tag">' + (j.lieu_vie || '?') + '</span></div>' +
+    '<div class="dw-jeune-info">' +
+    '<span class="dw-jeune-tag">' + (j.statut_presence || '') + '</span>' +
+    '<span class="dw-jeune-tag">' + (j.statut_mab || '') + '</span></div>' +
+    vulnsHtml +
+    '</div></div>';
+}
+
+function executeDashAction(actionType) {
+  switch(actionType) {
+    case 'new_jeune': navigate('enregistrement'); break;
+    case 'search': navigate('suivi'); break;
+    case 'eviction': navigate('suivi'); setTimeout(function() { openEvictionModal(); }, 300); break;
+    case 'stats': navigate('plaidoyer'); break;
+    case 'rappels': navigate('rappels'); break;
+    default: break;
+  }
+}
+
+// ============================================================================
+//  MODALE AJOUT WIDGET DASHBOARD
+// ============================================================================
+
+function openAddDashWidgetModal() {
+  DASH_SELECTED_TYPE = '';
+  document.querySelectorAll('.dash-type-card').forEach(function(c) { c.style.borderColor = 'transparent'; });
+  document.getElementById('dw-options-area').innerHTML = '<p class="text-muted text-center small">Choisissez un type de widget ci-dessus.</p>';
+  document.getElementById('dw-custom-title').value = '';
+  document.getElementById('dw-custom-emoji').value = '📊';
+  document.getElementById('dw-custom-colspan').value = 3;
+  document.getElementById('dw-custom-rowspan').value = 2;
+  document.querySelectorAll('#dw-color-picker .widget-color-swatch').forEach(function(s) { s.classList.remove('active'); });
+  document.querySelector('#dw-color-picker .wc-teal-1').classList.add('active');
+  modalAddDashWidgetInstance.show();
+}
+
+function selectDashWidgetType(type) {
+  DASH_SELECTED_TYPE = type;
+  document.querySelectorAll('.dash-type-card').forEach(function(c) { c.style.borderColor = 'transparent'; });
+  document.getElementById('dwt-' + type).style.borderColor = 'var(--u56-teal)';
+  
+  var area = document.getElementById('dw-options-area');
+  
+  if (type === 'dash_stat') {
+    // Show list of plaidoyer widgets to pick from
+    var html = '<label class="form-label fw-bold small">Choisir un widget Plaidoyer existant</label>';
+    if (PLAIDOYER_WIDGETS.length === 0) {
+      html += '<div class="alert alert-warning py-2 small"><i class="fas fa-info-circle me-1"></i> Aucun widget Plaidoyer créé. Allez dans Plaidoyer pour en créer.</div>';
+      // Also show quick stats
+      html += '<label class="form-label fw-bold small mt-2">Ou un indicateur rapide</label>';
+      html += '<select class="form-select form-select-sm" id="dw-stat-quick">' +
+        '<option value="">— Choisir —</option>' +
+        '<option value="nouveaux">Nouveaux (mois)</option>' +
+        '<option value="total_actifs">Actifs (stock)</option>' +
+        '<option value="referencements_instit">Demandes MAB</option>' +
+        '<option value="evictions">Évictions</option>' +
+        '<option value="mineurs_moins_15">Mineurs -15 ans</option>' +
+        '<option value="filles">Filles</option></select>';
+    } else {
+      html += '<select class="form-select form-select-sm" id="dw-stat-source">' +
+        '<option value="">— Choisir —</option>';
+      PLAIDOYER_WIDGETS.forEach(function(pw) {
+        html += '<option value="' + pw.id + '">' + (pw.emoji || '') + ' ' + (pw.title || pw.id) + ' (' + pw.type + ')</option>';
+      });
+      html += '</select>';
+      html += '<hr class="my-2">';
+      html += '<label class="form-label fw-bold small">Ou un indicateur rapide du mois</label>';
+      html += '<select class="form-select form-select-sm" id="dw-stat-quick">' +
+        '<option value="">— Aucun (utiliser plaidoyer) —</option>' +
+        '<option value="nouveaux">Nouveaux (mois)</option>' +
+        '<option value="total_actifs">Actifs (stock)</option>' +
+        '<option value="referencements_instit">Demandes MAB</option>' +
+        '<option value="evictions">Évictions</option>' +
+        '<option value="mineurs_moins_15">Mineurs -15 ans</option>' +
+        '<option value="filles">Filles</option></select>';
+    }
+    area.innerHTML = html;
+    document.getElementById('dw-custom-emoji').value = '📈';
+    document.getElementById('dw-custom-colspan').value = 2;
+    document.getElementById('dw-custom-rowspan').value = 2;
+    
+  } else if (type === 'dash_rappels') {
+    area.innerHTML = '<div class="alert alert-info py-2 small"><i class="fas fa-bell me-1"></i> Ce widget affichera automatiquement le résumé des rappels en retard et à faire, avec la liste des prochains.</div>';
+    document.getElementById('dw-custom-title').value = 'Rappels';
+    document.getElementById('dw-custom-emoji').value = '🔔';
+    document.getElementById('dw-custom-colspan').value = 5;
+    document.getElementById('dw-custom-rowspan').value = 3;
+    
+  } else if (type === 'dash_action') {
+    area.innerHTML = '<label class="form-label fw-bold small">Type d\'action</label>' +
+      '<select class="form-select form-select-sm" id="dw-action-type">' +
+      '<option value="new_jeune">➕ Nouveau Jeune</option>' +
+      '<option value="search">🔍 Chercher un Jeune</option>' +
+      '<option value="eviction">🏚️ Déclarer Éviction</option>' +
+      '<option value="stats">📊 Voir les Stats</option>' +
+      '<option value="rappels">🔔 Voir les Rappels</option></select>';
+    document.getElementById('dw-custom-emoji').value = '⚡';
+    document.getElementById('dw-custom-colspan').value = 2;
+    document.getElementById('dw-custom-rowspan').value = 2;
+    
+  } else if (type === 'dash_jeune') {
+    area.innerHTML = '<label class="form-label fw-bold small">Rechercher le jeune à épingler</label>' +
+      '<input type="text" class="form-control form-control-sm" id="dw-jeune-search" placeholder="Nom, surnom ou téléphone..." oninput="searchJeuneForDashPin(this.value)">' +
+      '<input type="hidden" id="dw-jeune-id" value="">' +
+      '<div id="dw-jeune-search-results" class="dash-pin-search-results d-none"></div>' +
+      '<div id="dw-jeune-selected" class="mt-2 d-none">' +
+      '<span class="badge bg-primary p-2" id="dw-jeune-selected-name"></span>' +
+      '<button type="button" class="btn btn-sm btn-link text-danger" onclick="clearDashJeuneSelection()"><i class="fas fa-times"></i></button></div>';
+    document.getElementById('dw-custom-emoji').value = '📌';
+    document.getElementById('dw-custom-colspan').value = 3;
+    document.getElementById('dw-custom-rowspan').value = 3;
+  }
+}
+
+// Recherche jeune pour épingler
+var dashPinSearchTimer = null;
+function searchJeuneForDashPin(query) {
+  clearTimeout(dashPinSearchTimer);
+  var rc = document.getElementById('dw-jeune-search-results');
+  if (!query || query.length < 2) { rc.classList.add('d-none'); return; }
+  dashPinSearchTimer = setTimeout(function() {
+    google.script.run.withSuccessHandler(function(results) {
+      rc.innerHTML = '';
+      if (results.length === 0) {
+        rc.innerHTML = '<div class="p-2 text-muted small text-center">Aucun résultat</div>';
+        rc.classList.remove('d-none');
+        return;
+      }
+      results.forEach(function(j) {
+        rc.innerHTML += '<div class="dps-item" onclick="selectJeuneForDashPin(\'' + j.id + '\', \'' + j.nom.replace(/'/g, "\\'") + '\')">' +
+          '<strong>' + j.nom + '</strong> <small class="text-muted ms-2">' + (j.surnom || '') + '</small> <small class="text-muted ms-2">' + (j.tel || '') + '</small></div>';
+      });
+      rc.classList.remove('d-none');
+    }).searchJeunesForRappel(query);
+  }, 300);
+}
+
+function selectJeuneForDashPin(id, nom) {
+  document.getElementById('dw-jeune-id').value = id;
+  document.getElementById('dw-jeune-selected-name').innerText = nom;
+  document.getElementById('dw-jeune-selected').classList.remove('d-none');
+  document.getElementById('dw-jeune-search-results').classList.add('d-none');
+  document.getElementById('dw-jeune-search').value = '';
+  document.getElementById('dw-custom-title').value = nom;
+}
+
+function clearDashJeuneSelection() {
+  document.getElementById('dw-jeune-id').value = '';
+  document.getElementById('dw-jeune-selected').classList.add('d-none');
+  document.getElementById('dw-jeune-selected-name').innerText = '';
+}
+
+// ============================================================================
+//  SAUVEGARDER NOUVEAU WIDGET DASHBOARD
+// ============================================================================
+
+function saveDashWidget() {
+  if (!DASH_SELECTED_TYPE) { alert("Choisissez un type de widget."); return; }
+  
+  var w = {
+    id: generateDashWidgetId(),
+    type: DASH_SELECTED_TYPE,
+    title: document.getElementById('dw-custom-title').value.trim(),
+    emoji: document.getElementById('dw-custom-emoji').value || '📊',
+    color: getSelectedColor('dw'),
+    gridColSpan: Math.max(1, Math.min(12, parseInt(document.getElementById('dw-custom-colspan').value) || 3)),
+    gridRowSpan: Math.max(1, Math.min(8, parseInt(document.getElementById('dw-custom-rowspan').value) || 2)),
+    order: DASHBOARD_WIDGETS.length
+  };
+  
+  if (DASH_SELECTED_TYPE === 'dash_stat') {
+    var sourceEl = document.getElementById('dw-stat-source');
+    var quickEl = document.getElementById('dw-stat-quick');
+    if (sourceEl && sourceEl.value) {
+      w.sourceWidgetId = sourceEl.value;
+      if (!w.title) {
+        var pw = PLAIDOYER_WIDGETS.find(function(p) { return p.id === sourceEl.value; });
+        if (pw) w.title = pw.title;
+      }
+    } else if (quickEl && quickEl.value) {
+      w.statKey = quickEl.value;
+      var labels = { nouveaux: 'Nouveaux', total_actifs: 'Actifs', referencements_instit: 'Demandes MAB', evictions: 'Évictions', mineurs_moins_15: 'Mineurs -15', filles: 'Filles' };
+      if (!w.title) w.title = labels[quickEl.value] || quickEl.value;
+    } else {
+      alert("Sélectionnez une source de statistique."); return;
+    }
+  } else if (DASH_SELECTED_TYPE === 'dash_rappels') {
+    if (!w.title) w.title = 'Rappels';
+  } else if (DASH_SELECTED_TYPE === 'dash_action') {
+    var actionEl = document.getElementById('dw-action-type');
+    w.actionType = actionEl ? actionEl.value : 'search';
+    var actionLabels = { new_jeune: 'Nouveau Jeune', search: 'Rechercher', eviction: 'Éviction', stats: 'Statistiques', rappels: 'Rappels' };
+    if (!w.title) w.title = actionLabels[w.actionType] || 'Action';
+  } else if (DASH_SELECTED_TYPE === 'dash_jeune') {
+    var jeuneId = document.getElementById('dw-jeune-id').value;
+    if (!jeuneId) { alert("Recherchez et sélectionnez un jeune."); return; }
+    w.jeuneId = jeuneId;
+  }
+  
+  DASHBOARD_WIDGETS.push(w);
+  saveDashWidgetsToStorage();
+  modalAddDashWidgetInstance.hide();
+  refreshDashboardWidgets();
+}
+
+// ============================================================================
+//  CONFIG PAR DÉFAUT
+// ============================================================================
+
+function loadDefaultDashWidgets() {
+  if (DASHBOARD_WIDGETS.length > 0) {
+    if (!confirm("Cela remplacera vos widgets actuels. Continuer ?")) return;
+  }
+  
+  DASHBOARD_WIDGETS = [
+    { id: generateDashWidgetId(), type: 'dash_action', title: 'Nouveau Jeune', emoji: '➕', color: 'teal-3', gridColSpan: 2, gridRowSpan: 2, order: 0, actionType: 'new_jeune' },
+    { id: generateDashWidgetId(), type: 'dash_action', title: 'Rechercher', emoji: '🔍', color: 'teal-1', gridColSpan: 2, gridRowSpan: 2, order: 1, actionType: 'search' },
+    { id: generateDashWidgetId(), type: 'dash_action', title: 'Éviction', emoji: '🏚️', color: 'teal-5', gridColSpan: 2, gridRowSpan: 2, order: 2, actionType: 'eviction' },
+    { id: generateDashWidgetId(), type: 'dash_stat', title: 'Nouveaux', emoji: '🆕', color: 'teal-1', gridColSpan: 2, gridRowSpan: 2, order: 3, statKey: 'nouveaux' },
+    { id: generateDashWidgetId(), type: 'dash_stat', title: 'Actifs', emoji: '👥', color: 'teal-2', gridColSpan: 2, gridRowSpan: 2, order: 4, statKey: 'total_actifs' },
+    { id: generateDashWidgetId(), type: 'dash_stat', title: 'Évictions', emoji: '⚠️', color: 'teal-5', gridColSpan: 2, gridRowSpan: 2, order: 5, statKey: 'evictions' },
+    { id: generateDashWidgetId(), type: 'dash_rappels', title: 'À faire', emoji: '🔔', color: 'teal-4', gridColSpan: 6, gridRowSpan: 4, order: 6 },
+    { id: generateDashWidgetId(), type: 'dash_stat', title: 'Demandes MAB', emoji: '🏠', color: 'teal-3', gridColSpan: 3, gridRowSpan: 2, order: 7, statKey: 'referencements_instit' },
+    { id: generateDashWidgetId(), type: 'dash_action', title: 'Statistiques', emoji: '📊', color: 'teal-6', gridColSpan: 3, gridRowSpan: 2, order: 8, actionType: 'stats' }
+  ];
+  
+  saveDashWidgetsToStorage();
+  refreshDashboardWidgets();
+}
+
+// ============================================================================
+//  ÉDITER / SUPPRIMER WIDGET DASHBOARD
+// ============================================================================
+
+function openEditDashWidget(widgetId) {
+  var w = DASHBOARD_WIDGETS.find(function(ww) { return ww.id === widgetId; });
+  if (!w) return;
+  document.getElementById('edw-id').value = w.id;
+  document.getElementById('edw-title').value = w.title || '';
+  document.getElementById('edw-emoji').value = w.emoji || '';
+  document.getElementById('edw-colspan').value = w.gridColSpan || 3;
+  document.getElementById('edw-rowspan').value = w.gridRowSpan || 2;
+  document.getElementById('edw-order').value = w.order || 0;
+  document.querySelectorAll('#edw-color-picker .widget-color-swatch').forEach(function(s) { s.classList.remove('active'); });
+  var colorEl = document.querySelector('#edw-color-picker .wc-' + (w.color || 'teal-1'));
+  if (colorEl) colorEl.classList.add('active');
+  modalEditDashWidgetInstance.show();
+}
+
+function saveEditDashWidget() {
+  var id = document.getElementById('edw-id').value;
+  var w = DASHBOARD_WIDGETS.find(function(ww) { return ww.id === id; });
+  if (!w) return;
+  w.title = document.getElementById('edw-title').value.trim() || w.title;
+  w.emoji = document.getElementById('edw-emoji').value || w.emoji;
+  w.gridColSpan = Math.max(1, Math.min(12, parseInt(document.getElementById('edw-colspan').value) || 3));
+  w.gridRowSpan = Math.max(1, Math.min(8, parseInt(document.getElementById('edw-rowspan').value) || 2));
+  w.color = getSelectedColor('edw');
+  w.order = parseInt(document.getElementById('edw-order').value) || 0;
+  saveDashWidgetsToStorage();
+  renderDashboardWidgets();
+  modalEditDashWidgetInstance.hide();
+}
+
+function deleteDashWidgetFromEdit() {
+  if (!confirm("Supprimer ce widget ?")) return;
+  var id = document.getElementById('edw-id').value;
+  DASHBOARD_WIDGETS = DASHBOARD_WIDGETS.filter(function(w) { return w.id !== id; });
+  saveDashWidgetsToStorage();
+  renderDashboardWidgets();
+  modalEditDashWidgetInstance.hide();
+}
+
+// ============================================================================
+//  LAYOUT MODE DASHBOARD
+// ============================================================================
+
+function toggleDashLayoutMode() {
+  DASH_LAYOUT_MODE = !DASH_LAYOUT_MODE;
+  var grid = document.getElementById('dashboard-widgets-grid');
+  var btn = document.getElementById('btn-dash-layout-mode');
+  if (DASH_LAYOUT_MODE) {
+    grid.classList.add('dash-layout-mode');
+    btn.classList.add('active');
+    btn.innerHTML = '<i class="fas fa-lock me-1"></i> Verrouiller';
+  } else {
+    grid.classList.remove('dash-layout-mode');
+    btn.classList.remove('active');
+    btn.innerHTML = '<i class="fas fa-th me-1"></i> Disposer';
+    saveDashWidgetsToStorage();
+  }
+  renderDashboardWidgets();
+}
+
+// ============================================================================
+//  DRAG & DROP DASHBOARD
+// ============================================================================
+
+function handleDashDragStart(e) {
+  dashDraggedWidget = this;
+  this.classList.add('dash-dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', this.getAttribute('data-dw-id'));
+}
+function handleDashDragEnd(e) {
+  this.classList.remove('dash-dragging');
+  document.querySelectorAll('.dash-widget-card.dash-drag-over').forEach(function(el) { el.classList.remove('dash-drag-over'); });
+  dashDraggedWidget = null;
+}
+function handleDashDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+function handleDashDragEnter(e) { e.preventDefault(); if (this !== dashDraggedWidget) this.classList.add('dash-drag-over'); }
+function handleDashDragLeave(e) { this.classList.remove('dash-drag-over'); }
+function handleDashDrop(e) {
+  e.preventDefault();
+  this.classList.remove('dash-drag-over');
+  if (dashDraggedWidget && this !== dashDraggedWidget) {
+    var fromId = dashDraggedWidget.getAttribute('data-dw-id');
+    var toId = this.getAttribute('data-dw-id');
+    var fromIdx = DASHBOARD_WIDGETS.findIndex(function(w) { return w.id === fromId; });
+    var toIdx = DASHBOARD_WIDGETS.findIndex(function(w) { return w.id === toId; });
+    if (fromIdx >= 0 && toIdx >= 0) {
+      var item = DASHBOARD_WIDGETS.splice(fromIdx, 1)[0];
+      DASHBOARD_WIDGETS.splice(toIdx, 0, item);
+      DASHBOARD_WIDGETS.forEach(function(w, i) { w.order = i; });
+      saveDashWidgetsToStorage();
+      renderDashboardWidgets();
+    }
+  }
+}
+
+// ============================================================================
+//  RESIZE HANDLES DASHBOARD
+// ============================================================================
+
+function initDashResizeHandles() {
+  document.querySelectorAll('.dash-resize-handle').forEach(function(handle) {
+    handle.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var widgetId = this.getAttribute('data-dw-id');
+      var card = this.closest('.dash-widget-card');
+      if (!card) return;
+      var grid = document.getElementById('dashboard-widgets-grid');
+      var gridRect = grid.getBoundingClientRect();
+      var colWidth = gridRect.width / 12;
+      var rowHeight = 55 + 14;
+      var startX = e.clientX;
+      var startY = e.clientY;
+      var w = DASHBOARD_WIDGETS.find(function(ww) { return ww.id === widgetId; });
+      if (!w) return;
+      var startCol = w.gridColSpan || 3;
+      var startRow = w.gridRowSpan || 2;
+      function onMove(ev) {
+        var dx = ev.clientX - startX;
+        var dy = ev.clientY - startY;
+        var nc = Math.max(1, Math.min(12, Math.round(startCol + dx / colWidth)));
+        var nr = Math.max(1, Math.min(8, Math.round(startRow + dy / rowHeight)));
+        card.style.gridColumn = 'span ' + nc;
+        card.style.gridRow = 'span ' + nr;
+        card.setAttribute('data-temp-c', nc);
+        card.setAttribute('data-temp-r', nr);
+      }
+      function onUp(ev) {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        w.gridColSpan = parseInt(card.getAttribute('data-temp-c')) || startCol;
+        w.gridRowSpan = parseInt(card.getAttribute('data-temp-r')) || startRow;
+        saveDashWidgetsToStorage();
+        renderDashboardWidgets();
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+}
+
 </script>
