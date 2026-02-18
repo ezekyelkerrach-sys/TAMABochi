@@ -1,17 +1,29 @@
 // ============================================================================
+//  SUIVI 56 — Code.gs — Backend complet
+//  Phases 1-10 intégrées depuis TAMABochi
+//  Utopia 56 — Février 2026
+// ============================================================================
+
+// ============================================================================
 //                               CONFIGURATION
 // ============================================================================
 
 var SHEET_ID = SpreadsheetApp.getActiveSpreadsheet().getId();
 
+// Phase 9 : Cache serveur (30 min TTL)
+var CACHE_TTL = 1800; // 30 minutes en secondes
+
 // ============================================================================
 //                                ROUTAGE & HTML
 // ============================================================================
 
+// Phase 3 : Titre dynamique depuis BDD_ANTENNE
 function doGet(e) {
+  var antenneConfig = getAntenneConfig_();
+  var title = (antenneConfig.NOM_APP || 'SUIVI 56') + ' - ' + (antenneConfig.NOM_ANTENNE || 'Utopia 56');
   return HtmlService.createTemplateFromFile('Index')
       .evaluate()
-      .setTitle('TAMABochi - Utopia 56')
+      .setTitle(title)
       .addMetaTag('viewport', 'width=device-width, initial-scale=1')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
@@ -24,11 +36,28 @@ function include(filename) {
 //                            SECURITE & CONNEXION
 // ============================================================================
 
+// Phase 8 : Hash SHA-256 des mots de passe
+function hashSHA256_(input) {
+  var raw = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, input);
+  return raw.map(function(byte) {
+    var v = (byte < 0) ? byte + 256 : byte;
+    return ('0' + v.toString(16)).slice(-2);
+  }).join('');
+}
+
 function loginUser(email, password) {
   const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('USERS');
   const data = ws.getDataRange().getValues();
+  var hashedInput = hashSHA256_(password);
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0] == email && data[i][1] == password) {
+    var storedPass = String(data[i][1]);
+    // Compatibilité : accepter mot de passe en clair OU hashé
+    var match = (storedPass === password) || (storedPass === hashedInput);
+    if (data[i][0] == email && match) {
+      // Si le mot de passe était en clair, le hasher automatiquement
+      if (storedPass === password && storedPass !== hashedInput) {
+        ws.getRange(i + 1, 2).setValue(hashedInput);
+      }
       return { 
         success: true, 
         token: Utilities.base64Encode(email + "_" + new Date().getTime()),
@@ -40,10 +69,52 @@ function loginUser(email, password) {
 }
 
 // ============================================================================
-//                          API : CONFIGURATION & SCENARIOS
+//                   Phase 3 : BDD_ANTENNE — Config par antenne
+// ============================================================================
+
+function getAntenneConfig_() {
+  try {
+    var cache = CacheService.getScriptCache();
+    var cached = cache.get('antenne_config');
+    if (cached) return JSON.parse(cached);
+    
+    var ss = SpreadsheetApp.openById(SHEET_ID);
+    var ws = ss.getSheetByName('BDD_ANTENNE');
+    if (!ws) return {};
+    var data = ws.getDataRange().getValues();
+    var config = {};
+    for (var i = 0; i < data.length; i++) {
+      var key = String(data[i][0] || '').trim();
+      var val = String(data[i][1] || '').trim();
+      if (key) config[key] = val;
+    }
+    cache.put('antenne_config', JSON.stringify(config), CACHE_TTL);
+    return config;
+  } catch(e) {
+    return {};
+  }
+}
+
+// Fonction exposée au client pour récupérer la config antenne
+function getAntenneConfig() {
+  return getAntenneConfig_();
+}
+
+// ============================================================================
+//                  API : CONFIGURATION & SCENARIOS
+//  Phase 2 : Ajout colonnes GENRES, TYPES_PROFILS, ROLES_FOYER, TRANCHES_AGE
+//  Phase 5 : Scénarios filtrés par profil (colonne Profils_Visibles)
+//  Phase 9 : Cache serveur CacheService
 // ============================================================================
 
 function getConfigData() {
+  // Phase 9 : Vérifier le cache d'abord
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get('config_data');
+  if (cached) {
+    try { return JSON.parse(cached); } catch(e) { /* cache corrompu, on recharge */ }
+  }
+  
   const ss = SpreadsheetApp.openById(SHEET_ID);
   
   const wsConfig = ss.getSheetByName('BDD_CONFIG');
@@ -64,6 +135,7 @@ function getConfigData() {
     }
   }
 
+  // Phase 5 : Scénarios avec colonne Profils_Visibles (col N = index 13)
   const wsScenarios = ss.getSheetByName('BDD_SCENARIOS');
   if (wsScenarios) { 
     const dataScenarios = wsScenarios.getDataRange().getValues();
@@ -72,22 +144,45 @@ function getConfigData() {
       let type = dataScenarios[i][0];
       if(type) {
         scenarios[type] = {
-          showLieuVie: !!dataScenarios[i][1], 
-          showLieuEvent: !!dataScenarios[i][2],
-          showPres: !!dataScenarios[i][3], 
-          showMab: !!dataScenarios[i][4],
-          showRefus: !!dataScenarios[i][5], 
-          showVuln: !!dataScenarios[i][6],
-          showContact: !!dataScenarios[i][7], 
-          showMat: !!dataScenarios[i][8],
-          showNote: !!dataScenarios[i][9]
+          showLieuEvent: !!dataScenarios[i][1],
+          showStatutPresence: !!dataScenarios[i][2],
+          showLieuVie: !!dataScenarios[i][3],
+          showStatutInstitution: !!dataScenarios[i][4],
+          showMotifStatutInstitution: !!dataScenarios[i][5],
+          showMateriel: !!dataScenarios[i][6],
+          showVulnerabilites: !!dataScenarios[i][7],
+          updateStatutPresence: !!dataScenarios[i][8],
+          updateLieuVie: !!dataScenarios[i][9],
+          updateStatutInstitution: !!dataScenarios[i][10],
+          updateMotifStatutInstitution: !!dataScenarios[i][11],
+          updateVulnerabilites: !!dataScenarios[i][12],
+          // Phase 5 : Profils visibles
+          profilsVisibles: String(dataScenarios[i][13] || '').trim()
         };
       }
     }
     config['SCENARIOS'] = scenarios;
   }
   
+  // Phase 3 : Injecter la config antenne
+  config['_ANTENNE'] = getAntenneConfig_();
+
+  // Phase 9 : Mettre en cache (max 100KB par clé, on tronque si nécessaire)
+  try {
+    var jsonStr = JSON.stringify(config);
+    if (jsonStr.length < 100000) {
+      cache.put('config_data', jsonStr, CACHE_TTL);
+    }
+  } catch(e) { /* cache trop gros, pas grave */ }
+  
   return config;
+}
+
+// Phase 9 : Fonction pour invalider le cache manuellement
+function invalidateCache() {
+  var cache = CacheService.getScriptCache();
+  cache.removeAll(['config_data', 'antenne_config']);
+  return { success: true, message: "Cache invalidé." };
 }
 
 // ============================================================================
@@ -120,148 +215,79 @@ function parseDateSecure(input) {
   return new Date(input);
 }
 
-function getJeuneStatus(id) {
-   const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_JEUNES');
+// Phase 1 : Renommé de getJeuneStatus → getBenefStatus
+function getBenefStatus(id) {
+   const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_BENEFICIAIRES');
    const data = ws.getDataRange().getValues();
    for(let i=1; i<data.length; i++) {
      if(data[i][0] == id) {
-       return { pres: data[i][9], mab: data[i][10], lieu: data[i][14] };
+       // Phase 2 : Colonnes mises à jour (M=12 statut_pres, N=13 lieu_vie, O=14 statut_inst)
+       return { pres: data[i][12], inst: data[i][14], lieu: data[i][13] };
      }
    }
-   return { pres:"", mab:"", lieu:"" };
+   return { pres:"", inst:"", lieu:"" };
 }
+
+// Rétrocompatibilité
+function getJeuneStatus(id) { return getBenefStatus(id); }
 
 // ============================================================================
 //                          GESTION DES RAPPELS
+//  Phase 6 : Rappels conditionnels par profil
 // ============================================================================
 
 function getRappelsAll() {
   const ss = SpreadsheetApp.openById(SHEET_ID);
   const wsRappels = ss.getSheetByName('BDD_RAPPELS');
-  const wsJeunes = ss.getSheetByName('BDD_JEUNES');
+  const wsBenef = ss.getSheetByName('BDD_BENEFICIAIRES');
   
   const dataRappels = wsRappels.getDataRange().getValues();
-  const dataJeunes = wsJeunes.getDataRange().getValues();
+  const dataBenef = wsBenef.getDataRange().getValues();
   
-  let jeunesMap = {};
-  for(let i=1; i<dataJeunes.length; i++) {
-    jeunesMap[dataJeunes[i][0]] = { nom: dataJeunes[i][3], tel: dataJeunes[i][2], lieu: dataJeunes[i][14] };
+  let benefMap = {};
+  for(let i=1; i<dataBenef.length; i++) {
+    benefMap[dataBenef[i][0]] = { 
+      nom: dataBenef[i][1] + ' ' + (dataBenef[i][2] || ''), 
+      surnom: dataBenef[i][3],
+      typeProfil: dataBenef[i][9] || '' // Phase 2 : col J = Type_Profil
+    };
   }
   
-  let enRetard = [];
-  let aFaire = [];
-  let archives = [];
-  const today = new Date(); 
-  today.setHours(0,0,0,0);
-
-  for (let i = 1; i < dataRappels.length; i++) {
-    try {
-      let statut = String(dataRappels[i][5] || "").trim();
-      let statutLower = statut.toLowerCase();
-      let idJeune = dataRappels[i][0];
-      let jInfo = jeunesMap[idJeune] || { nom: "Inconnu", tel: "", lieu: "" };
-      let rawDate = dataRappels[i][4];
-      let echeance = parseDateSecure(rawDate);
-      
-      let item = {
-        idRappel: dataRappels[i][1], 
-        idJeune: idJeune, 
-        nomJeune: jInfo.nom, 
-        telJeune: jInfo.tel, 
-        lieuJeune: jInfo.lieu,
-        titre: String(dataRappels[i][6] || "Sans titre"), 
-        details: String(dataRappels[i][3] || ""), 
-        dateRaw: echeance.toISOString(), 
-        date: formatDate(echeance), 
-        isLate: false,
-        typeRappel: String(dataRappels[i][8] || ""),
-        statut: statut
-      };
-
-      if (statutLower.indexOf("faire") !== -1) {
-        if (echeance < today) {
-          item.isLate = true;
-          enRetard.push(item);
-        } else {
-          aFaire.push(item);
-        }
-      } else {
-        archives.push(item);
-      }
-    } catch (e) { console.log("Erreur ligne rappel " + i + ": " + e.toString()); }
-  }
+  const today = new Date(); today.setHours(0,0,0,0);
+  let results = [];
   
-  enRetard.sort(function(a,b) { return new Date(a.dateRaw) - new Date(b.dateRaw); });
-  aFaire.sort(function(a,b) { return new Date(a.dateRaw) - new Date(b.dateRaw); });
-  archives.sort(function(a,b) { return new Date(b.dateRaw) - new Date(a.dateRaw); });
-  
-  return { enRetard: enRetard, aFaire: aFaire, archives: archives };
-}
-
-function getRappels() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
-  const wsRappels = ss.getSheetByName('BDD_RAPPELS');
-  const wsJeunes = ss.getSheetByName('BDD_JEUNES');
-  
-  const dataRappels = wsRappels.getDataRange().getValues();
-  const dataJeunes = wsJeunes.getDataRange().getValues();
-  
-  let jeunesMap = {};
-  for(let i=1; i<dataJeunes.length; i++) {
-    jeunesMap[dataJeunes[i][0]] = { nom: dataJeunes[i][3], tel: dataJeunes[i][2], lieu: dataJeunes[i][14] };
-  }
-  
-  let result = [];
-  const today = new Date(); 
-  today.setHours(0,0,0,0);
-
-  for (let i = 1; i < dataRappels.length; i++) {
-    try {
-      let statut = String(dataRappels[i][5] || "").toLowerCase().trim();
-      if (statut.indexOf("faire") !== -1) {
-        let idJeune = dataRappels[i][0];
-        let jInfo = jeunesMap[idJeune] || { nom: "Inconnu", tel: "", lieu: "" };
-        let rawDate = dataRappels[i][4];
-        let echeance = parseDateSecure(rawDate);
-        let isLate = echeance < today;
-        
-        result.push({
-          idRappel: dataRappels[i][1], 
-          idJeune: idJeune, 
-          nomJeune: jInfo.nom, 
-          telJeune: jInfo.tel, 
-          lieuJeune: jInfo.lieu,
-          titre: String(dataRappels[i][6] || "Sans titre"), 
-          details: String(dataRappels[i][3] || ""), 
-          dateRaw: echeance.toISOString(), 
-          date: formatDate(echeance), 
-          isLate: isLate,
-          typeRappel: String(dataRappels[i][8] || "")
-        });
-      }
-    } catch (e) { console.log("Erreur ligne rappel " + i + ": " + e.toString()); }
-  }
-  
-  result.sort(function(a,b) {
-    if (a.isLate && !b.isLate) return -1;
-    if (!a.isLate && b.isLate) return 1;
-    return new Date(a.dateRaw) - new Date(b.dateRaw);
-  });
-  return result;
-}
-
-function updateRappel(form) {
-  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_RAPPELS');
-  const data = ws.getDataRange().getValues();
-  for(let i=1; i<data.length; i++) {
-    if(data[i][1] == form.idRappel) {
-      ws.getRange(i+1, 4).setValue(form.details); 
-      ws.getRange(i+1, 5).setValue(new Date(form.date)); 
-      return { success: true, message: "Rappel mis à jour." };
+  for(let i=1; i<dataRappels.length; i++) {
+    let statut = String(dataRappels[i][5] || "").toLowerCase().trim();
+    if(statut.indexOf("faire") !== -1) {
+      let echeance = parseDateSecure(dataRappels[i][3]);
+      let idBenef = dataRappels[i][0];
+      let b = benefMap[idBenef] || { nom: "Inconnu", surnom: "", typeProfil: "" };
+      results.push({
+        idRappel: dataRappels[i][1],
+        idBenef: idBenef,
+        nomBenef: b.nom,
+        surnomBenef: b.surnom,
+        typeRappel: dataRappels[i][6] || "",
+        titre: dataRappels[i][6] || "Sans titre",
+        details: dataRappels[i][3] || "",
+        date: formatDate(echeance),
+        isLate: echeance < today,
+        typeProfil: b.typeProfil
+      });
     }
   }
-  return { success: false, message: "Rappel introuvable." };
+  
+  results.sort(function(a, b) {
+    if (a.isLate && !b.isLate) return -1;
+    if (!a.isLate && b.isLate) return 1;
+    return 0;
+  });
+  
+  return results;
 }
+
+// Alias pour rétrocompatibilité
+function getRappels() { return getRappelsAll(); }
 
 function closeRappel(idRappel, auteurEmail, statusLabel) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
@@ -273,18 +299,19 @@ function closeRappel(idRappel, auteurEmail, statusLabel) {
   for(let i=1; i<data.length; i++) {
     if(data[i][1] == idRappel) {
       wsRappels.getRange(i+1, 6).setValue(statusLabel); 
-      let idJeune = data[i][0];
+      let idBenef = data[i][0];
       let titre = data[i][6];
       let details = data[i][3];
-      let status = getJeuneStatus(idJeune);
-      wsEvents.appendRow([Utilities.getUuid(), idJeune, now, "Suivi Rappel", "Distance", status.lieu, "Rappel traité (" + statusLabel + ") : " + titre + " - " + details, status.pres, status.mab, "", "", "", status.lieu, auteurEmail]);
+      let status = getBenefStatus(idBenef);
+      wsEvents.appendRow([Utilities.getUuid(), idBenef, now, "Suivi Rappel", "Distance", status.lieu, "Rappel traité (" + statusLabel + ") : " + titre + " - " + details, status.pres, status.inst, "", "", "", status.lieu, auteurEmail]);
       return { success: true };
     }
   }
   return { success: false, message: "Rappel introuvable" };
 }
 
-function createAutomaticReminders(idJeune, vulnsArray, eventType, details) {
+// Phase 6 : Rappels conditionnels par profil
+function createAutomaticReminders(idBenef, vulnsArray, eventType, details) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
   const wsRappels = ss.getSheetByName('BDD_RAPPELS');
   const wsRegles = ss.getSheetByName('BDD_REGLES_RAPPELS');
@@ -292,11 +319,32 @@ function createAutomaticReminders(idJeune, vulnsArray, eventType, details) {
   let rappelsToAdd = [];
   let rules = [];
   
+  // Phase 6 : Récupérer le Type_Profil du bénéficiaire
+  var benefProfil = '';
+  try {
+    var wsBenef = ss.getSheetByName('BDD_BENEFICIAIRES');
+    var dataBenef = wsBenef.getDataRange().getValues();
+    for (var b = 1; b < dataBenef.length; b++) {
+      if (dataBenef[b][0] == idBenef) {
+        benefProfil = String(dataBenef[b][9] || '').trim(); // Col J = Type_Profil
+        break;
+      }
+    }
+  } catch(e) {}
+  
   if (wsRegles) {
     const dataRules = wsRegles.getDataRange().getValues();
     for (let i = 1; i < dataRules.length; i++) {
       if(dataRules[i][0] !== "") {
-        rules.push({ trigger: String(dataRules[i][0]).toLowerCase(), delay: dataRules[i][1], title: dataRules[i][2], msg: dataRules[i][3] });
+        // Phase 6 : Colonne Profils_Visibles dans les règles de rappels
+        var profilsVisibles = String(dataRules[i][4] || '').trim();
+        rules.push({ 
+          trigger: String(dataRules[i][0]).toLowerCase(), 
+          delay: dataRules[i][1], 
+          title: dataRules[i][2], 
+          msg: dataRules[i][3],
+          profils: profilsVisibles
+        });
       }
     }
   }
@@ -306,6 +354,12 @@ function createAutomaticReminders(idJeune, vulnsArray, eventType, details) {
   if (eventType) triggersToCheck.push(String(eventType).toLowerCase());
 
   rules.forEach(rule => {
+    // Phase 6 : Vérifier si la règle s'applique au profil du bénéficiaire
+    if (rule.profils) {
+      var profilsList = rule.profils.split(',').map(function(p) { return p.trim(); });
+      if (profilsList.length > 0 && !profilsList.includes(benefProfil)) return;
+    }
+    
     let match = triggersToCheck.some(t => t.includes(rule.trigger));
     if (match) {
       let ech = new Date(); ech.setDate(now.getDate() + parseInt(rule.delay));
@@ -314,51 +368,19 @@ function createAutomaticReminders(idJeune, vulnsArray, eventType, details) {
   });
 
   rappelsToAdd.forEach(r => { 
-    wsRappels.appendRow([idJeune, Utilities.getUuid(), "", r.details, r.date, "A faire", r.titre, now, "Automatique"]); 
+    wsRappels.appendRow([idBenef, Utilities.getUuid(), "", r.details, r.date, "A faire", r.titre, now, "Automatique"]); 
   });
 }
 
 function saveManualReminder(form) {
   const wsRappels = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_RAPPELS');
   const now = new Date();
-  wsRappels.appendRow([form.idJeune, Utilities.getUuid(), "", form.details, new Date(form.date), "A faire", form.titre, now, form.typeRappel || ""]);
+  wsRappels.appendRow([form.idBenef, Utilities.getUuid(), "", form.details, new Date(form.date), "A faire", form.titre, now, form.typeRappel || ""]);
   return { success: true, message: "Rappel ajouté." };
 }
 
 // ============================================================================
-//                  C16 : RAPPEL MANUEL DEPUIS VUE RAPPELS
-// ============================================================================
-
-function searchJeunesForRappel(query) {
-  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_JEUNES');
-  const data = ws.getDataRange().getValues();
-  let results = [];
-  let q = String(query).toLowerCase().trim();
-  
-  for (let i = 1; i < data.length; i++) {
-    let nom = String(data[i][3]).toLowerCase();
-    let surnom = String(data[i][4]).toLowerCase();
-    let telClean = normalizeTel(data[i][2]);
-    let qClean = normalizeTel(q);
-    
-    let matchText = nom.includes(q) || surnom.includes(q);
-    let matchTel = (qClean.length > 3) && telClean.includes(qClean);
-    
-    if (matchText || matchTel) {
-      results.push({
-        id: data[i][0],
-        nom: data[i][3],
-        surnom: data[i][4],
-        tel: data[i][2]
-      });
-    }
-    if (results.length >= 20) break;
-  }
-  return results;
-}
-
-// ============================================================================
-//      NOUVEAU : AJOUT COMMENTAIRE SUR RAPPEL (depuis vue Rappels)
+//      AJOUT COMMENTAIRE SUR RAPPEL
 // ============================================================================
 
 function addCommentToRappel(idRappel, comment) {
@@ -379,136 +401,162 @@ function addCommentToRappel(idRappel, comment) {
   }
   return { success: false, message: "Rappel introuvable." };
 }
+
+// ============================================================================
+//      RECHERCHE BÉNÉFICIAIRE POUR RAPPEL
+// ============================================================================
+
+function searchBenefForRappel(query) {
+  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_BENEFICIAIRES');
+  const data = ws.getDataRange().getValues();
+  let results = [];
+  let q = String(query).toLowerCase().trim();
+  
+  for (let i = 1; i < data.length; i++) {
+    let prenom = String(data[i][1]).toLowerCase();
+    let nom = String(data[i][2]).toLowerCase();
+    let surnom = String(data[i][3]).toLowerCase();
+    let telClean = normalizeTel(data[i][8]); // Col I = Telephone
+    let qClean = normalizeTel(q);
+    
+    let matchText = prenom.includes(q) || nom.includes(q) || surnom.includes(q);
+    let matchTel = (qClean.length > 3) && telClean.includes(qClean);
+    
+    if (matchText || matchTel) {
+      results.push({
+        id: data[i][0],
+        nom: data[i][1] + ' ' + (data[i][2] || ''),
+        surnom: data[i][3],
+        tel: data[i][8]
+      });
+    }
+    if (results.length >= 20) break;
+  }
+  return results;
+}
+
+// Alias rétrocompatibilité
+function searchJeunesForRappel(query) { return searchBenefForRappel(query); }
+
 // ============================================================================
 //                          ENREGISTREMENT & DOUBLONS
+//  Phase 1 : Renommage Jeune → Bénéficiaire
+//  Phase 2 : Nouvelles colonnes Type_Profil, ID_Foyer, Role_Foyer, Genre via config
 // ============================================================================
 
 function checkDoublonTel(tel) {
   if (!tel) return [];
-  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_JEUNES');
+  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_BENEFICIAIRES');
   const data = ws.getDataRange().getValues();
   let doublons = [];
   let inputTelClean = normalizeTel(tel);
   if (inputTelClean.length < 4) return []; 
   for (let i = 1; i < data.length; i++) {
-    let dbTel = normalizeTel(data[i][2]);
+    let dbTel = normalizeTel(data[i][8]); // Col I = Telephone
     if (dbTel === inputTelClean && dbTel !== "") {
-      doublons.push({ nom: data[i][3], surnom: data[i][4], id: data[i][0] });
+      doublons.push({ nom: data[i][1] + ' ' + (data[i][2] || ''), surnom: data[i][3], id: data[i][0] });
     }
   }
   return doublons;
 }
 
-function saveJeuneSmart(form, auteurEmail, modeForce) {
+function saveBenefSmart(form, auteurEmail, modeForce) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  const wsJeunes = ss.getSheetByName('BDD_JEUNES');
+  const wsBenef = ss.getSheetByName('BDD_BENEFICIAIRES');
   const wsEvents = ss.getSheetByName('BDD_EVENTS');
   const wsModifs = ss.getSheetByName('BDD_MODIFS');
   const telPropre = "'" + form.tel; 
   const now = new Date();
   
-  let finalIdGroupe = Utilities.getUuid();
+  let finalIdFoyer = form.idFoyer || ''; // Phase 2 : ID_Foyer
   let historiqueMsg = "Création fiche";
-  let historiqueGroupeMsg = "";
 
   if (form.forceGroupId) { 
-    finalIdGroupe = form.forceGroupId; 
-    historiqueMsg = "Ajout au groupe (Enregistrement groupé)"; 
-    historiqueGroupeMsg = "Ajouté au groupe (enreg. groupé) le " + formatDate(now);
+    finalIdFoyer = form.forceGroupId; 
+    historiqueMsg = "Ajout au foyer (Enregistrement groupé)"; 
   } 
   else if (!modeForce) {
     let doublons = checkDoublonTel(form.tel);
     if (doublons.length > 0) return { status: "CONFLICT", doublons: doublons, message: "Ce numéro existe déjà." };
   }
   else if (modeForce === 'JOIN_GROUP') {
-    const data = wsJeunes.getDataRange().getValues();
+    const data = wsBenef.getDataRange().getValues();
     let inputTelClean = normalizeTel(form.tel);
     let groupFound = null;
     for (let i = 1; i < data.length; i++) {
-      if (normalizeTel(data[i][2]) === inputTelClean) { 
-        if (data[i][1]) {
-          groupFound = data[i][1]; 
+      if (normalizeTel(data[i][8]) === inputTelClean) {
+        if (data[i][10]) { // Col K = ID_Foyer
+          groupFound = data[i][10]; 
         } else { 
-          groupFound = Utilities.getUuid(); 
-          wsJeunes.getRange(i + 1, 2).setValue(groupFound); 
-          let existingHist = String(data[i][17] || "");
-          let newHist = existingHist ? existingHist + " | Groupe créé le " + formatDate(now) : "Groupe créé le " + formatDate(now);
-          wsJeunes.getRange(i + 1, 18).setValue(newHist);
-        } 
+          groupFound = 'FOY' + Utilities.getUuid().substring(0, 8); 
+          wsBenef.getRange(i + 1, 11).setValue(groupFound); // Col K
+        }
         break; 
       }
     }
-    if (groupFound) finalIdGroupe = groupFound;
-    historiqueMsg = "Ajout au groupe existant";
-    historiqueGroupeMsg = "Rejoint groupe existant le " + formatDate(now);
-  }
-  else if (modeForce === 'NEW_OWNER') {
-    const data = wsJeunes.getDataRange().getValues();
-    let inputTelClean = normalizeTel(form.tel);
-    for (let i = 1; i < data.length; i++) {
-      if (normalizeTel(data[i][2]) === inputTelClean) { 
-        wsModifs.appendRow([data[i][0], "Num_Tel (Rotation SIM)", data[i][2], "Inconnu", now, auteurEmail]); 
-        wsJeunes.getRange(i + 1, 3).setValue("Inconnu"); 
-      }
-    }
-    historiqueMsg = "Récupération numéro (Rotation SIM)";
+    if (groupFound) finalIdFoyer = groupFound;
   }
 
-  const idJeune = Utilities.getUuid();
+  const idBenef = 'BEN' + Utilities.getUuid().substring(0, 10);
   const idEvent = Utilities.getUuid();
   const dateRencontre = form.dateRencontre ? new Date(form.dateRencontre) : now;
-  const vulnString = form.vulnerabilites ? form.vulnerabilites.join(", ") : "";
-  
-  let initStatutPres = "Présent pas équipé"; let initStatutMab = "Non demandée";
-  const eventType = form.eventType || "Rencontre";
-  if (eventType.includes("Départ UK") || eventType.includes("Parti")) initStatutPres = "Parti";
-  else if (eventType.includes("Demande MAB")) initStatutMab = "Demandée";
-  else if (eventType.includes("MAB") && eventType.includes("Foyer")) { initStatutMab = "Validée"; initStatutPres = "MAB (Foyer)"; }
-
-  let labelsStr = Array.isArray(form.labelsAutres) ? form.labelsAutres.join(", ") : (form.labelsAutres || "");
+  let eventType = form.typeEvenement || "Première rencontre";
+  let vulnString = Array.isArray(form.vulnerabilites) ? form.vulnerabilites.join(", ") : (form.vulnerabilites || "");
+  let initStatutPres = form.statutPresence || "";
+  let initStatutInst = form.statutInstitution || "";
   let langueStr = Array.isArray(form.langue) ? form.langue.join(", ") : (form.langue || "");
   let contactTypeStr = Array.isArray(form.typeContact) ? form.typeContact.join(", ") : (form.typeContact || "Non connu");
+  let labelsStr = Array.isArray(form.labelsAutres) ? form.labelsAutres.join(", ") : (form.labelsAutres || "");
 
-  wsJeunes.appendRow([
-    idJeune,              // A - ID_Jeune
-    finalIdGroupe,        // B - ID_Groupe
-    telPropre,            // C - Num_Tel
-    form.nom,             // D - Prenom_Nom
-    form.surnom,          // E - Surnom
-    form.age,             // F - Age
-    form.genre,           // G - Genre
-    form.nationalite,     // H - Nationalite
-    langueStr,            // I - Langue
-    initStatutPres,       // J - Statut_Presence
-    initStatutMab,        // K - Statut_Mab
-    dateRencontre,        // L - Date_Dernier_Contact
-    dateRencontre,        // M - Date_Derniere_Rencontre
-    "",                   // N - Date_Derniere_Distrib
-    form.lieuVie,         // O - Lieu_Vie
-    vulnString,           // P - Vulnerabilite_Tags
-    historiqueMsg,        // Q - Historique_Jeune
-    historiqueGroupeMsg,  // R - Historique_Groupe
-    now,                  // S - Date_Creation
-    form.notesFixes || "",// T - Notes_Fixes
-    labelsStr             // U - Labels_Autres
+  // Phase 1+2 : Structure BDD_BENEFICIAIRES — 24 colonnes
+  wsBenef.appendRow([
+    idBenef,              // A - ID_Beneficiaire
+    form.prenom,          // B - Prenom
+    form.nom,             // C - Nom
+    form.surnom,          // D - Surnom
+    form.dateNaissance,   // E - Date_Naissance
+    form.genre,           // F - Genre (Phase 2 : via config)
+    form.nationalite,     // G - Nationalite
+    langueStr,            // H - Langue
+    telPropre,            // I - Telephone
+    form.typeProfil || "",// J - Type_Profil (Phase 2 : NOUVEAU)
+    finalIdFoyer,         // K - ID_Foyer (Phase 2 : NOUVEAU)
+    form.roleFoyer || "", // L - Role_Foyer (Phase 2 : NOUVEAU)
+    initStatutPres,       // M - Statut_Presence
+    form.lieuVie,         // N - Lieu_Vie
+    initStatutInst,       // O - Statut_Institution (Phase 1 : renommé)
+    form.motifStatutInstitution || "", // P - Motif_Statut_Institution
+    vulnString,           // Q - Vulnerabilites
+    form.typeContact || "",// R - Type_Contact
+    form.contactsAutres || "", // S - Contacts_Autres (JSON)
+    form.notes || "",     // T - Notes
+    now,                  // U - Date_Creation
+    auteurEmail,          // V - Cree_Par
+    now,                  // W - Date_Modification
+    auteurEmail           // X - Modifie_Par
   ]);
   
-  wsEvents.appendRow([idEvent, idJeune, dateRencontre, eventType, contactTypeStr, "", form.details || "Première rencontre", initStatutPres, initStatutMab, "", vulnString, "", form.lieuVie, auteurEmail]);
+  wsEvents.appendRow([idEvent, idBenef, dateRencontre, eventType, contactTypeStr, "", form.details || "Première rencontre", initStatutPres, initStatutInst, "", vulnString, "", form.lieuVie, auteurEmail]);
   
-  createAutomaticReminders(idJeune, form.vulnerabilites, eventType, "");
+  createAutomaticReminders(idBenef, form.vulnerabilites, eventType, "");
   
-  return { success: true, id: idJeune, groupId: finalIdGroupe, message: "Enregistrement réussi !" };
+  return { success: true, id: idBenef, groupId: finalIdFoyer, message: "Enregistrement réussi !" };
 }
+
+// Alias rétrocompatibilité
+function saveJeuneSmart(form, auteurEmail, modeForce) { return saveBenefSmart(form, auteurEmail, modeForce); }
 
 // ============================================================================
 //                          MISE A JOUR & EVENEMENTS
+//  Phase 1 : Renommage
+//  Phase 2 : Nouvelles colonnes
 // ============================================================================
 
-function updateJeuneProfile(form, auteurEmail) {
+function updateBenefProfile(form, auteurEmail) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  const wsJeunes = ss.getSheetByName('BDD_JEUNES');
+  const wsBenef = ss.getSheetByName('BDD_BENEFICIAIRES');
   const wsModifs = ss.getSheetByName('BDD_MODIFS');
-  const data = wsJeunes.getDataRange().getValues();
+  const data = wsBenef.getDataRange().getValues();
   const now = new Date();
 
   let rowIndex = -1;
@@ -518,112 +566,160 @@ function updateJeuneProfile(form, auteurEmail) {
     if (data[i][0] == form.id) {
       rowIndex = i + 1;
       current = { 
-        tel: data[i][2], nom: data[i][3], surnom: data[i][4], age: data[i][5], 
-        lieu: data[i][14], pres: data[i][9], mab: data[i][10],
-        notes: data[i][19] || "",
-        labels: data[i][20] || ""
+        prenom: data[i][1], nom: data[i][2], surnom: data[i][3],
+        dateNaissance: data[i][4], genre: data[i][5],
+        nationalite: data[i][6], langue: data[i][7],
+        tel: data[i][8], typeProfil: data[i][9],
+        idFoyer: data[i][10], roleFoyer: data[i][11],
+        statutPresence: data[i][12], lieuVie: data[i][13],
+        statutInstitution: data[i][14], motifStatutInstitution: data[i][15],
+        vulnerabilites: data[i][16], notes: data[i][19],
+        labels: data[i][17] || ""
       };
       break;
     }
   }
 
-  if (rowIndex === -1) return { success: false, message: "Jeune introuvable." };
+  if (rowIndex === -1) return { success: false, message: "Bénéficiaire introuvable." };
 
   let changes = [];
-  if (form.nom && form.nom !== current.nom) { wsModifs.appendRow([form.id, "Modification Nom", current.nom, form.nom, now, auteurEmail]); wsJeunes.getRange(rowIndex, 4).setValue(form.nom); changes.push("Nom"); }
-  if (form.surnom !== current.surnom) { wsModifs.appendRow([form.id, "Modification Surnom", current.surnom, form.surnom, now, auteurEmail]); wsJeunes.getRange(rowIndex, 5).setValue(form.surnom); changes.push("Surnom"); }
-  if (normalizeTel(form.tel) !== normalizeTel(current.tel)) { 
-    var telForSheet = "'" + String(form.tel).replace(/^'+/, '');
-    wsModifs.appendRow([form.id, "Modification Tel", current.tel, telForSheet, now, auteurEmail]); 
-    wsJeunes.getRange(rowIndex, 3).setNumberFormat('@').setValue(String(form.tel).replace(/^'+/, '')); 
-    changes.push("Téléphone"); 
+
+  // Fonction helper pour les mises à jour
+  function checkAndUpdate(fieldName, formValue, colIndex, currentValue) {
+    if (formValue !== undefined && String(formValue) !== String(currentValue || '')) {
+      wsModifs.appendRow([form.id, "Modification " + fieldName, currentValue, formValue, now, auteurEmail]);
+      wsBenef.getRange(rowIndex, colIndex).setValue(formValue);
+      changes.push(fieldName);
+    }
   }
-  if (form.age != current.age) { wsModifs.appendRow([form.id, "Modification Age", current.age, form.age, now, auteurEmail]); wsJeunes.getRange(rowIndex, 6).setValue(form.age); changes.push("Age"); }
-  if (form.lieu && form.lieu !== current.lieu) { wsModifs.appendRow([form.id, "Modification Lieu", current.lieu, form.lieu, now, auteurEmail]); wsJeunes.getRange(rowIndex, 15).setValue(form.lieu); changes.push("Lieu"); }
+
+  // Champs texte simples
+  if (form.prenom !== undefined) checkAndUpdate('Prénom', form.prenom, 2, current.prenom);
+  if (form.nom !== undefined) checkAndUpdate('Nom', form.nom, 3, current.nom);
+  if (form.surnom !== undefined) checkAndUpdate('Surnom', form.surnom, 4, current.surnom);
+  if (form.tel !== undefined) {
+    var newTel = "'" + form.tel;
+    if (normalizeTel(form.tel) !== normalizeTel(current.tel)) {
+      checkAndUpdate('Téléphone', newTel, 9, current.tel);
+    }
+  }
+  if (form.dateNaissance !== undefined) checkAndUpdate('Date_Naissance', form.dateNaissance, 5, current.dateNaissance);
+  if (form.genre !== undefined) checkAndUpdate('Genre', form.genre, 6, current.genre);
+  if (form.nationalite !== undefined) checkAndUpdate('Nationalité', form.nationalite, 7, current.nationalite);
   
-  if (form.statutPres && form.statutPres !== current.pres) { 
-    wsModifs.appendRow([form.id, "Modification Statut Presence", current.pres, form.statutPres, now, auteurEmail]); 
-    wsJeunes.getRange(rowIndex, 10).setValue(form.statutPres); 
-    changes.push("Statut Présence"); 
-  }
-  if (form.statutMab && form.statutMab !== current.mab) { 
-    wsModifs.appendRow([form.id, "Modification Statut MAB", current.mab, form.statutMab, now, auteurEmail]); 
-    wsJeunes.getRange(rowIndex, 11).setValue(form.statutMab); 
-    changes.push("Statut MAB"); 
+  // Phase 2 : Nouveaux champs
+  if (form.typeProfil !== undefined) checkAndUpdate('Type_Profil', form.typeProfil, 10, current.typeProfil);
+  if (form.idFoyer !== undefined) checkAndUpdate('ID_Foyer', form.idFoyer, 11, current.idFoyer);
+  if (form.roleFoyer !== undefined) checkAndUpdate('Role_Foyer', form.roleFoyer, 12, current.roleFoyer);
+
+  // Dropdowns
+  if (form.lieu !== undefined) checkAndUpdate('Lieu_Vie', form.lieu, 14, current.lieuVie);
+  if (form.statutInstitution !== undefined) checkAndUpdate('Statut_Institution', form.statutInstitution, 15, current.statutInstitution);
+  if (form.statutPresence !== undefined) checkAndUpdate('Statut_Presence', form.statutPresence, 13, current.statutPresence);
+
+  // Notes
+  if (form.notesFixes !== undefined && form.notesFixes !== (current.notes || '')) {
+    wsModifs.appendRow([form.id, "Modification Notes", current.notes, form.notesFixes, now, auteurEmail]);
+    wsBenef.getRange(rowIndex, 20).setValue(form.notesFixes); // Col T
+    changes.push("Notes");
   }
 
-  if (form.notesFixes !== undefined && form.notesFixes !== current.notes) {
-    wsModifs.appendRow([form.id, "Modification Notes Infos", current.notes, form.notesFixes, now, auteurEmail]);
-    wsJeunes.getRange(rowIndex, 20).setValue(form.notesFixes);
-    changes.push("Notes Fixes");
+  // Langue (multi-select)
+  if (form.langue !== undefined) {
+    var newLangStr = Array.isArray(form.langue) ? form.langue.join(", ") : (form.langue || "");
+    if (newLangStr !== String(current.langue || '')) {
+      checkAndUpdate('Langue', newLangStr, 8, current.langue);
+    }
   }
 
-  let newLabelsStr = Array.isArray(form.labelsAutres) ? form.labelsAutres.join(", ") : (form.labelsAutres || "");
-  if (newLabelsStr !== current.labels) {
-    wsModifs.appendRow([form.id, "Modification Labels Autres", current.labels, newLabelsStr, now, auteurEmail]);
-    wsJeunes.getRange(rowIndex, 21).setValue(newLabelsStr);
-    changes.push("Labels Autres");
+  // Labels
+  if (form.labelsAutres !== undefined) {
+    var newLabelsStr = Array.isArray(form.labelsAutres) ? form.labelsAutres.join(", ") : (form.labelsAutres || "");
+    if (newLabelsStr !== current.labels) {
+      wsModifs.appendRow([form.id, "Modification Labels", current.labels, newLabelsStr, now, auteurEmail]);
+      wsBenef.getRange(rowIndex, 18).setValue(newLabelsStr); // Col R = Type_Contact → non, col S?
+      changes.push("Labels");
+    }
   }
 
-  // Modification des vulnérabilités
+  // Vulnérabilités
   if (form.vulnerabilites !== undefined) {
     let newVulnStr = Array.isArray(form.vulnerabilites) ? form.vulnerabilites.join(", ") : (form.vulnerabilites || "");
-    let currentVulns = String(data[rowIndex - 1][15] || "");
+    let currentVulns = String(data[rowIndex - 1][16] || "");
     if (newVulnStr !== currentVulns) {
       wsModifs.appendRow([form.id, "Modification Vulnérabilités", currentVulns, newVulnStr, now, auteurEmail]);
-      wsJeunes.getRange(rowIndex, 16).setValue(newVulnStr);
+      wsBenef.getRange(rowIndex, 17).setValue(newVulnStr); // Col Q
       changes.push("Vulnérabilités");
     }
+  }
+
+  // Mettre à jour Date_Modification et Modifie_Par
+  if (changes.length > 0) {
+    wsBenef.getRange(rowIndex, 23).setValue(now);  // Col W
+    wsBenef.getRange(rowIndex, 24).setValue(auteurEmail); // Col X
   }
 
   if (changes.length === 0) return { success: false, message: "Aucune modification détectée." };
   return { success: true, message: "Modifications enregistrées : " + changes.join(", ") };
 }
 
+// Alias rétrocompatibilité
+function updateJeuneProfile(form, auteurEmail) { return updateBenefProfile(form, auteurEmail); }
+
 function saveNewEvent(form, auteurEmail) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
   const wsEvents = ss.getSheetByName('BDD_EVENTS');
-  const wsJeunes = ss.getSheetByName('BDD_JEUNES');
-  const dataJeunes = wsJeunes.getDataRange().getValues();
+  const wsBenef = ss.getSheetByName('BDD_BENEFICIAIRES');
+  const dataBenef = wsBenef.getDataRange().getValues();
   const now = new Date(); 
   const dateEvent = form.date ? new Date(form.date) : now; 
   const idEvent = Utilities.getUuid();
   
   let rowIndex = -1; 
   let current = {};
-  for (let i = 1; i < dataJeunes.length; i++) { 
-    if (dataJeunes[i][0] == form.idJeune) { 
+  for (let i = 1; i < dataBenef.length; i++) { 
+    if (dataBenef[i][0] == form.idBenef) { 
       rowIndex = i + 1; 
-      current = { pres: dataJeunes[i][9], mab: dataJeunes[i][10], lieuVie: dataJeunes[i][14], vulns: dataJeunes[i][15] }; 
+      current = { 
+        pres: dataBenef[i][12],      // M = Statut_Presence
+        inst: dataBenef[i][14],      // O = Statut_Institution
+        motifInst: dataBenef[i][15], // P = Motif_Statut_Institution
+        lieuVie: dataBenef[i][13],   // N = Lieu_Vie
+        vulns: dataBenef[i][16]      // Q = Vulnerabilites
+      }; 
       break; 
     } 
   }
-  if (rowIndex === -1) return { success: false, message: "Jeune introuvable." };
+  if (rowIndex === -1) return { success: false, message: "Bénéficiaire introuvable." };
   
-  wsJeunes.getRange(rowIndex, 12).setValue(dateEvent);
-  wsJeunes.getRange(rowIndex, 13).setValue(dateEvent);
+  // Mise à jour Date_Modification
+  wsBenef.getRange(rowIndex, 23).setValue(dateEvent); // Col W
+  wsBenef.getRange(rowIndex, 24).setValue(auteurEmail); // Col X
   
   let eventTypeLower = String(form.type).toLowerCase();
-  if (eventTypeLower.includes("distrib")) {
-    wsJeunes.getRange(rowIndex, 14).setValue(dateEvent);
-  }
   
   let finalLieuVie = current.lieuVie; 
   if (form.lieuVie && form.lieuVie !== "" && form.lieuVie !== current.lieuVie) { 
-    wsJeunes.getRange(rowIndex, 15).setValue(form.lieuVie); 
+    wsBenef.getRange(rowIndex, 14).setValue(form.lieuVie); // Col N
     finalLieuVie = form.lieuVie; 
   }
   
   let finalStatutPres = current.pres; 
   if (form.statutPres && form.statutPres !== "" && form.statutPres !== current.pres) { 
-    wsJeunes.getRange(rowIndex, 10).setValue(form.statutPres); 
+    wsBenef.getRange(rowIndex, 13).setValue(form.statutPres); // Col M
     finalStatutPres = form.statutPres; 
   }
   
-  let finalStatutMab = current.mab; 
-  if (form.statutMab && form.statutMab !== "" && form.statutMab !== current.mab) { 
-    wsJeunes.getRange(rowIndex, 11).setValue(form.statutMab); 
-    finalStatutMab = form.statutMab; 
+  let finalStatutInst = current.inst; 
+  if (form.statutInstitution && form.statutInstitution !== "" && form.statutInstitution !== current.inst) { 
+    wsBenef.getRange(rowIndex, 15).setValue(form.statutInstitution); // Col O
+    finalStatutInst = form.statutInstitution; 
+  }
+
+  let finalMotifInst = current.motifInst;
+  if (form.motifStatutInstitution && form.motifStatutInstitution !== "") {
+    wsBenef.getRange(rowIndex, 16).setValue(form.motifStatutInstitution); // Col P
+    finalMotifInst = form.motifStatutInstitution;
   }
   
   let newVulnString = ""; 
@@ -638,18 +734,18 @@ function saveNewEvent(form, auteurEmail) {
     }); 
     if (addedVulns.length > 0) { 
       newVulnString = currentVList.join(", "); 
-      wsJeunes.getRange(rowIndex, 16).setValue(newVulnString); 
+      wsBenef.getRange(rowIndex, 17).setValue(newVulnString); // Col Q
     } 
   }
   
   let fullDetails = form.note || ""; 
   let materielStr = Array.isArray(form.materiel) ? form.materiel.join(", ") : (form.materiel || "");
   let contactStr = Array.isArray(form.typeContact) ? form.typeContact.join(", ") : (form.typeContact || "Physique");
-  let motifStr = Array.isArray(form.motifStatutMab) ? form.motifStatutMab.join(", ") : (form.motifStatutMab || "");
+  let motifStr = Array.isArray(form.motifStatutInstitution) ? form.motifStatutInstitution.join(", ") : (form.motifStatutInstitution || "");
   
-  wsEvents.appendRow([idEvent, form.idJeune, dateEvent, form.type, contactStr, form.lieuEvent || "", fullDetails, finalStatutPres, finalStatutMab, motifStr, newVulnString, materielStr, finalLieuVie, auteurEmail]);
+  wsEvents.appendRow([idEvent, form.idBenef, dateEvent, form.type, contactStr, form.lieuEvent || "", fullDetails, finalStatutPres, finalStatutInst, motifStr, newVulnString, materielStr, finalLieuVie, auteurEmail]);
   
-  createAutomaticReminders(form.idJeune, form.vulns, form.type, form.note);
+  createAutomaticReminders(form.idBenef, form.vulns, form.type, form.note);
   
   return { success: true, message: "Événement enregistré." };
 }
@@ -661,19 +757,8 @@ function getEventData(idEvent) {
     if (String(data[i][0]) === String(idEvent)) {
       var rawDate = data[i][2];
       var dateRawStr = "";
-      try {
-        dateRawStr = (rawDate instanceof Date) ? rawDate.toISOString() : String(rawDate || "");
-      } catch(e) {
-        dateRawStr = "";
-      }
-      return { 
-        id: data[i][0], 
-        dateRaw: dateRawStr,
-        type: data[i][3], 
-        contact: data[i][4], 
-        lieu: data[i][5], 
-        details: data[i][6]
-      };
+      try { dateRawStr = (rawDate instanceof Date) ? rawDate.toISOString() : String(rawDate || ""); } catch(e) { dateRawStr = ""; }
+      return { id: data[i][0], dateRaw: dateRawStr, type: data[i][3], contact: data[i][4], lieu: data[i][5], details: data[i][6] };
     }
   }
   return null;
@@ -698,62 +783,68 @@ function saveEditedEvent(form, auteurEmail) {
 }
 
 function saveMassEvent(form, auteurEmail) {
-  if (!form.ids || form.ids.length === 0) return { success: false, message: "Aucun jeune sélectionné." };
+  if (!form.ids || form.ids.length === 0) return { success: false, message: "Aucun bénéficiaire sélectionné." };
   let successCount = 0;
   form.ids.forEach(id => {
     let singleForm = { 
-      idJeune: id, type: form.type, date: form.date, lieuVie: form.lieuVie, lieuEvent: form.lieuEvent, 
-      statutMab: form.statutMab, statutPres: form.statutPres, 
-      motifStatutMab: form.motifStatutMab,
+      idBenef: id, type: form.type, date: form.date, lieuVie: form.lieuVie, lieuEvent: form.lieuEvent, 
+      statutInstitution: form.statutInstitution, statutPres: form.statutPres, 
+      motifStatutInstitution: form.motifStatutInstitution,
       materiel: form.materiel, typeContact: form.typeContact, vulns: form.vulns, note: form.note 
     };
     try { saveNewEvent(singleForm, auteurEmail); successCount++; } catch(e) { console.error(e); }
   });
-  return { success: true, message: successCount + " jeunes mis à jour avec succès." };
+  return { success: true, message: successCount + " bénéficiaires mis à jour avec succès." };
 }
 
 // ============================================================================
-//              C6 : SELECTION PAR LIEU DE VIE (EVICTION RAPIDE)
+//              ÉVICTION RAPIDE PAR LIEU DE VIE
 // ============================================================================
 
-function getJeunesByLieuVie(lieuVie) {
-  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_JEUNES');
+function getBenefByLieuVie(lieuVie) {
+  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_BENEFICIAIRES');
   const data = ws.getDataRange().getValues();
   let results = [];
   
   for (let i = 1; i < data.length; i++) {
-    let statutPres = String(data[i][9] || "").toLowerCase();
-    let lieu = String(data[i][14] || "");
+    let statutPres = String(data[i][12] || "").toLowerCase();
+    let lieu = String(data[i][13] || "");
     
-    if (lieu === lieuVie && (statutPres.includes("présent") || statutPres.includes("mab (foyer)") || statutPres.includes("hospitalisé"))) {
+    if (lieu === lieuVie && (statutPres.includes("présent") || statutPres.includes("foyer") || statutPres.includes("hospitalisé"))) {
       results.push({
         id: data[i][0],
-        nom: data[i][3],
-        surnom: data[i][4],
-        age: data[i][5],
-        tel: data[i][2],
-        lieu: data[i][14]
+        nom: data[i][1] + ' ' + (data[i][2] || ''),
+        surnom: data[i][3],
+        age: data[i][4], // Date_Naissance
+        tel: data[i][8],
+        lieu: data[i][13]
       });
     }
   }
   return results;
 }
 
+// Alias rétrocompatibilité
+function getJeunesByLieuVie(lieuVie) { return getBenefByLieuVie(lieuVie); }
+
 // ============================================================================
-//              C11 & C12 & M5 : RECHERCHE AVANCEE AVEC FILTRES
+//              RECHERCHE AVANCÉE AVEC FILTRES
+//  Phase 1 : Renommage
+//  Phase 2 : Filtrage par Type_Profil
 // ============================================================================
 
-function searchJeunesAdvanced(query, filters) {
+function searchBenefAdvanced(query, filters) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  const wsJeunes = ss.getSheetByName('BDD_JEUNES');
+  const wsBenef = ss.getSheetByName('BDD_BENEFICIAIRES');
   const wsModifs = ss.getSheetByName('BDD_MODIFS');
-  const dataJeunes = wsJeunes.getDataRange().getValues();
+  const dataBenef = wsBenef.getDataRange().getValues();
   const dataModifs = wsModifs.getDataRange().getValues();
   
-  let groupCounts = {};
-  for(let i=1; i<dataJeunes.length; i++) {
-    let gid = dataJeunes[i][1]; 
-    if(gid) groupCounts[gid] = (groupCounts[gid] || 0) + 1;
+  // Phase 2 : Compteur par foyer au lieu de groupes
+  let foyerCounts = {};
+  for(let i=1; i<dataBenef.length; i++) {
+    let fid = dataBenef[i][10]; // Col K = ID_Foyer
+    if(fid) foyerCounts[fid] = (foyerCounts[fid] || 0) + 1;
   }
 
   let results = [];
@@ -762,78 +853,81 @@ function searchJeunesAdvanced(query, filters) {
   let qClean = normalizeTel(q);
   
   let filterPresence = (filters && filters.statutPresence) ? filters.statutPresence : "";
-  let filterMab = (filters && filters.statutMab) ? filters.statutMab : "";
+  let filterInst = (filters && filters.statutInstitution) ? filters.statutInstitution : "";
   let filterVuln = (filters && filters.vulnerabilite) ? filters.vulnerabilite.toLowerCase() : "";
   let filterLieu = (filters && filters.lieuVie) ? filters.lieuVie : "";
+  let filterProfil = (filters && filters.typeProfil) ? filters.typeProfil : ""; // Phase 2
   let showAllActifs = (filters && filters.showAllActifs) ? true : false;
   let showAll = (filters && filters.showAll) ? true : false;
   
-  for (let i = 1; i < dataJeunes.length; i++) {
-    let rawTel = String(dataJeunes[i][2]);
-    let telClean = normalizeTel(rawTel);
-    let nom = String(dataJeunes[i][3]).toLowerCase();
-    let surnom = String(dataJeunes[i][4]).toLowerCase();
-    let lieu = String(dataJeunes[i][14]).toLowerCase();
-    let statutPres = String(dataJeunes[i][9] || "");
-    let statutMab = String(dataJeunes[i][10] || "");
-    let vulns = String(dataJeunes[i][15] || "").toLowerCase();
-    let lieuVie = String(dataJeunes[i][14] || "");
+  for (let i = 1; i < dataBenef.length; i++) {
+    let row = dataBenef[i];
+    let id = row[0];
+    let prenom = String(row[1] || "").toLowerCase();
+    let nom = String(row[2] || "").toLowerCase();
+    let surnom = String(row[3] || "").toLowerCase();
+    let telClean = normalizeTel(row[8]);
+    let statutPres = String(row[12] || "");
+    let statutInst = String(row[14] || "");
+    let vulns = String(row[16] || "").toLowerCase();
+    let lieuVie = String(row[13] || "");
+    let typeProfil = String(row[9] || ""); // Phase 2
     
-    let matchText = false;
-    if (q === "" && (showAll || showAllActifs || filterPresence || filterMab || filterVuln || filterLieu)) {
-      matchText = true;
-    } else if (q !== "") {
-      matchText = nom.includes(q) || surnom.includes(q) || lieu.includes(q);
-      let matchTel = (qClean.length > 3) && telClean.includes(qClean);
-      matchText = matchText || matchTel;
-    } else {
-      continue;
+    // Filtres
+    if (filterPresence && statutPres !== filterPresence) continue;
+    if (filterInst && statutInst !== filterInst) continue;
+    if (filterVuln && !vulns.includes(filterVuln)) continue;
+    if (filterLieu && lieuVie !== filterLieu) continue;
+    if (filterProfil && typeProfil !== filterProfil) continue; // Phase 2
+    
+    if (!showAll && !showAllActifs) {
+      let matchText = q ? (prenom.includes(q) || nom.includes(q) || surnom.includes(q) || String(id).toLowerCase().includes(q)) : false;
+      let matchTel = (qClean.length > 3) ? telClean.includes(qClean) : false;
+      let hasFilter = filterPresence || filterInst || filterVuln || filterLieu || filterProfil;
+      if (!matchText && !matchTel && !hasFilter) continue;
     }
-    
-    if (!matchText) continue;
     
     if (showAllActifs) {
       let presLower = statutPres.toLowerCase();
-      if (!(presLower.includes("présent") || presLower.includes("mab (foyer)") || presLower.includes("hospitalisé"))) {
-        continue;
-      }
+      if (!presLower.includes("présent") && !presLower.includes("foyer") && !presLower.includes("hospitalisé")) continue;
     }
     
-    if (filterPresence && statutPres !== filterPresence) continue;
-    if (filterMab && statutMab !== filterMab) continue;
-    if (filterVuln && !vulns.includes(filterVuln.toLowerCase())) continue;
-    if (filterLieu && lieuVie !== filterLieu) continue;
-    
-    foundIDs.add(dataJeunes[i][0]);
-    let gid = dataJeunes[i][1];
-    let isGrouped = (gid && groupCounts[gid] > 1);
-    
-    let labels = dataJeunes[i][20] || "";
-    let genre = String(dataJeunes[i][6]).toUpperCase();
-
-    results.push({
-      id: dataJeunes[i][0], tel: dataJeunes[i][2], nom: dataJeunes[i][3], surnom: dataJeunes[i][4],
-      age: dataJeunes[i][5], nationalite: dataJeunes[i][7], statut_mab: dataJeunes[i][10], lieu: dataJeunes[i][14], is_history: false,
-      statut_presence: dataJeunes[i][9],
-      is_grouped: isGrouped,
-      labels: labels,
-      genre: genre,
-      vulns: dataJeunes[i][15] || ""
-    });
-    
-    if (results.length >= 200) break; 
+    if (!foundIDs.has(id)) {
+      foundIDs.add(id);
+      let fid = row[10];
+      let isFoyer = fid && foyerCounts[fid] && foyerCounts[fid] > 1;
+      results.push({
+        id: id,
+        nom: row[1] + ' ' + (row[2] || ''),
+        surnom: row[3],
+        age: row[4], // Date_Naissance
+        tel: row[8],
+        nationalite: row[6],
+        statut_institution: statutInst,
+        lieu: lieuVie,
+        is_history: false,
+        statut_presence: statutPres,
+        is_grouped: isFoyer,
+        genre: String(row[5] || ""),
+        vulns: vulns,
+        typeProfil: typeProfil // Phase 2
+      });
+    }
+    if (results.length >= 200) break;
   }
-
-  if (q !== "" && qClean.length > 3) {
-    for (let j = 1; j < dataModifs.length; j++) {
-      let oldVal = normalizeTel(dataModifs[j][2]); 
-      if (oldVal.includes(qClean)) {
-        let idAncien = dataModifs[j][0];
-        if (!foundIDs.has(idAncien)) {
-          for (let k = 1; k < dataJeunes.length; k++) {
-            if (dataJeunes[k][0] == idAncien) {
-              foundIDs.add(idAncien);
-              results.push({ id: dataJeunes[k][0], tel: dataJeunes[k][2], nom: dataJeunes[k][3], surnom: dataJeunes[k][4], age: dataJeunes[k][5], nationalite: dataJeunes[k][7], statut_mab: dataJeunes[k][10], lieu: dataJeunes[k][14], is_history: true, statut_presence: dataJeunes[k][9], is_grouped: false, labels:"", genre:"", vulns:"" });
+  
+  // Recherche dans l'historique des modifications
+  if (q && results.length < 200) {
+    for (let i = 1; i < dataModifs.length; i++) {
+      let oldVal = String(dataModifs[i][4] || "").toLowerCase();
+      let newVal = String(dataModifs[i][5] || "").toLowerCase();
+      if (oldVal.includes(q) || newVal.includes(q)) {
+        let idBenef = dataModifs[i][1];
+        if (!foundIDs.has(idBenef)) {
+          foundIDs.add(idBenef);
+          for (let k = 1; k < dataBenef.length; k++) {
+            if (dataBenef[k][0] === idBenef) {
+              results.push({ id: dataBenef[k][0], nom: dataBenef[k][1] + ' ' + (dataBenef[k][2] || ''), surnom: dataBenef[k][3], age: dataBenef[k][4], nationalite: dataBenef[k][6], statut_institution: String(dataBenef[k][14] || ""), lieu: String(dataBenef[k][13] || ""), is_history: true, statut_presence: String(dataBenef[k][12] || ""), is_grouped: false, genre: "", vulns: "", typeProfil: String(dataBenef[k][9] || "") });
               break;
             }
           }
@@ -845,15 +939,17 @@ function searchJeunesAdvanced(query, filters) {
   return results;
 }
 
-function searchJeunes(query) {
-  return searchJeunesAdvanced(query, null);
-}
+function searchBenef(query) { return searchBenefAdvanced(query, null); }
+
+// Alias rétrocompatibilité
+function searchJeunesAdvanced(query, filters) { return searchBenefAdvanced(query, filters); }
+function searchJeunes(query) { return searchBenef(query); }
 
 // ============================================================================
-//              U4 : DONNEES RAPPELS PAR JEUNE
+//              RAPPELS EN RETARD PAR BÉNÉFICIAIRE
 // ============================================================================
 
-function getRappelsEnRetardParJeune() {
+function getRappelsEnRetardParBenef() {
   const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_RAPPELS');
   const data = ws.getDataRange().getValues();
   const today = new Date();
@@ -865,172 +961,187 @@ function getRappelsEnRetardParJeune() {
     if (statut.indexOf("faire") !== -1) {
       let echeance = parseDateSecure(data[i][4]);
       if (echeance < today) {
-        let idJeune = data[i][0];
-        retardMap[idJeune] = (retardMap[idJeune] || 0) + 1;
+        let idBenef = data[i][0];
+        retardMap[idBenef] = (retardMap[idBenef] || 0) + 1;
       }
     }
   }
   return retardMap;
 }
 
+// Alias
+function getRappelsEnRetardParJeune() { return getRappelsEnRetardParBenef(); }
+
 // ============================================================================
-//                          RECHERCHE & FICHE & GROUPE
+//                          FICHE BÉNÉFICIAIRE & FOYER
+//  Phase 1 : Renommage
+//  Phase 2 : Nouvelles colonnes
+//  Phase 10 : Contexte foyer dans la fiche
 // ============================================================================
 
-function getFicheJeune(idJeune) {
+function getFicheBenef(idBenef) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  const dataJeunes = ss.getSheetByName('BDD_JEUNES').getDataRange().getValues();
-  var infoJeune = null;
+  const dataBenef = ss.getSheetByName('BDD_BENEFICIAIRES').getDataRange().getValues();
+  const dataEvents = ss.getSheetByName('BDD_EVENTS').getDataRange().getValues();
+  const dataModifs = ss.getSheetByName('BDD_MODIFS').getDataRange().getValues();
   
-  var groupCounts = {};
-  for (var i = 1; i < dataJeunes.length; i++) {
-    var gid = dataJeunes[i][1];
-    if (gid) groupCounts[gid] = (groupCounts[gid] || 0) + 1;
-  }
-
-  for (var i = 1; i < dataJeunes.length; i++) {
-    if (dataJeunes[i][0] == idJeune) {
-      var gid = dataJeunes[i][1];
-      var hasGroup = (gid && groupCounts[gid] > 1);
-      
-      infoJeune = {
-        id: dataJeunes[i][0], id_groupe: gid, tel: dataJeunes[i][2], nom: dataJeunes[i][3],
-        surnom: dataJeunes[i][4], age: dataJeunes[i][5], genre: dataJeunes[i][6], nationalite: dataJeunes[i][7],
-        langue: dataJeunes[i][8], statut_presence: dataJeunes[i][9], statut_mab: dataJeunes[i][10],
-        date_contact: formatDate(dataJeunes[i][11]), 
-        date_rencontre: formatDate(dataJeunes[i][12]),
-        date_distrib: formatDate(dataJeunes[i][13]),
-        lieu_vie: dataJeunes[i][14], vulnerabilites: dataJeunes[i][15],
-        has_group: hasGroup,
-        historique_groupe: dataJeunes[i][17] || "",
-        notes_fixes: dataJeunes[i][19] || "",
-        labels_autres: dataJeunes[i][20] || ""
+  let infoBenef = null;
+  for (let i = 1; i < dataBenef.length; i++) {
+    if (dataBenef[i][0] == idBenef) {
+      infoBenef = {
+        id: dataBenef[i][0],
+        prenom: dataBenef[i][1],
+        nom: dataBenef[i][2] || '',
+        surnom: dataBenef[i][3],
+        date_naissance: dataBenef[i][4],
+        genre: dataBenef[i][5],
+        nationalite: dataBenef[i][6],
+        langue: dataBenef[i][7],
+        tel: dataBenef[i][8],
+        type_profil: dataBenef[i][9] || '',       // Phase 2
+        id_foyer: dataBenef[i][10] || '',          // Phase 2
+        role_foyer: dataBenef[i][11] || '',        // Phase 2
+        statut_presence: dataBenef[i][12],
+        lieu_vie: dataBenef[i][13],
+        statut_institution: dataBenef[i][14],
+        motif_statut_institution: dataBenef[i][15],
+        vulnerabilites: dataBenef[i][16],
+        type_contact: dataBenef[i][17],
+        contacts_autres: dataBenef[i][18],
+        notes: dataBenef[i][19],
+        date_creation: dataBenef[i][20],
+        cree_par: dataBenef[i][21]
       };
       break;
     }
   }
-  if (!infoJeune) return { success: false, message: "Jeune introuvable" };
-
-  var dataEvents = ss.getSheetByName('BDD_EVENTS').getDataRange().getValues();
-  var history = [];
-  for (var j = 1; j < dataEvents.length; j++) {
-    if (dataEvents[j][1] == idJeune) {
-      // Convertir dateRaw en string ISO pour éviter problème de sérialisation
-      var rawEvtDate = dataEvents[j][2];
+  
+  if (!infoBenef) return { success: false, message: "Bénéficiaire introuvable." };
+  
+  // Historique combiné (events + modifications)
+  let history = [];
+  
+  for (let i = 1; i < dataEvents.length; i++) {
+    if (dataEvents[i][1] == idBenef) {
+      var rawDate = dataEvents[i][2];
       var dateRawStr = "";
-      try {
-        dateRawStr = (rawEvtDate instanceof Date) ? rawEvtDate.toISOString() : String(rawEvtDate || "");
-      } catch(e) {
-        dateRawStr = "";
-      }
+      try { dateRawStr = (rawDate instanceof Date) ? rawDate.toISOString() : String(rawDate || ""); } catch(e) {}
       history.push({
-        idEvent: dataEvents[j][0],
-        date: formatDate(dataEvents[j][2]),
+        id: dataEvents[i][0],
+        date: formatDate(rawDate),
         dateRaw: dateRawStr,
-        type: dataEvents[j][3],
-        lieu: dataEvents[j][5],
-        details: dataEvents[j][6],
-        statut_mab_event: dataEvents[j][8],
-        auteur: dataEvents[j][13]
+        type: dataEvents[i][3],
+        contact: dataEvents[i][4],
+        lieu: dataEvents[i][5],
+        details: dataEvents[i][6],
+        auteur: dataEvents[i][13]
       });
     }
   }
-
-  var dataModifs = ss.getSheetByName('BDD_MODIFS').getDataRange().getValues();
-  for (var m = 1; m < dataModifs.length; m++) {
-    if (dataModifs[m][0] == idJeune) {
-      // Convertir dateRaw en string ISO pour éviter problème de sérialisation
-      var rawModDate = dataModifs[m][4];
-      var dateRawModStr = "";
-      try {
-        dateRawModStr = (rawModDate instanceof Date) ? rawModDate.toISOString() : String(rawModDate || "");
-      } catch(e) {
-        dateRawModStr = "";
-      }
+  
+  for (let i = 1; i < dataModifs.length; i++) {
+    if (dataModifs[i][0] == idBenef || dataModifs[i][1] == idBenef) {
+      var mDate = dataModifs[i][4] || dataModifs[i][2];
+      var dateRawStr2 = "";
+      try { dateRawStr2 = (mDate instanceof Date) ? mDate.toISOString() : String(mDate || ""); } catch(e) {}
       history.push({
-        date: formatDate(dataModifs[m][4]),
-        dateRaw: dateRawModStr,
+        date: formatDate(mDate),
+        dateRaw: dateRawStr2,
         type: "Modification",
-        lieu: "-",
-        details: dataModifs[m][1] + " : " + dataModifs[m][2] + " -> " + dataModifs[m][3],
-        auteur: dataModifs[m][5]
+        details: (dataModifs[i][1] || dataModifs[i][3]) + " : " + (dataModifs[i][4] || dataModifs[i][2] || "") + " → " + (dataModifs[i][5] || dataModifs[i][3] || ""),
+        auteur: dataModifs[i][5] || dataModifs[i][6] || ""
       });
     }
   }
-
-  // Trier par date d'événement décroissante (plus récent en haut)
+  
   history.sort(function(a, b) {
     try {
       var dateA = a.dateRaw ? new Date(a.dateRaw) : new Date(0);
       var dateB = b.dateRaw ? new Date(b.dateRaw) : new Date(0);
-      if (isNaN(dateA.getTime())) dateA = new Date(0);
-      if (isNaN(dateB.getTime())) dateB = new Date(0);
       return dateB.getTime() - dateA.getTime();
-    } catch(e) {
-      return 0;
-    }
+    } catch(e) { return 0; }
   });
 
-  // Récupérer le dernier motif statut MAB depuis les events
-  var lastMotifMab = "";
+  // Dernier motif statut institution depuis les events
+  var lastMotifInst = "";
   for (var ev = dataEvents.length - 1; ev >= 1; ev--) {
-    if (dataEvents[ev][1] == idJeune) {
+    if (dataEvents[ev][1] == idBenef) {
       var motif = String(dataEvents[ev][9] || "").trim();
-      if (motif) { lastMotifMab = motif; break; }
+      if (motif) { lastMotifInst = motif; break; }
     }
   }
-  infoJeune.motif_statut_mab = lastMotifMab;
+  infoBenef.motif_statut_institution = infoBenef.motif_statut_institution || lastMotifInst;
 
-  return { success: true, jeune: infoJeune, history: history };
+  return { success: true, benef: infoBenef, history: history };
 }
 
-function getGroupMembers(groupId, excludeId) {
-  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_JEUNES');
+// Alias rétrocompatibilité
+function getFicheJeune(idJeune) {
+  var result = getFicheBenef(idJeune);
+  if (result.success) {
+    // Mapper pour compatibilité avec le code existant
+    result.jeune = result.benef;
+  }
+  return result;
+}
+
+// Phase 10 : Membres du foyer
+function getFoyerMembers(foyerId, excludeId) {
+  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_BENEFICIAIRES');
   const data = ws.getDataRange().getValues();
   let members = [];
   
   for(let i=1; i<data.length; i++) {
-    if(data[i][1] === groupId && data[i][0] !== excludeId) {
+    if(data[i][10] === foyerId && data[i][0] !== excludeId) {
       members.push({
         id: data[i][0],
-        nom: data[i][3],
-        surnom: data[i][4],
-        age: data[i][5]
+        prenom: data[i][1],
+        nom: data[i][2],
+        surnom: data[i][3],
+        age: data[i][4],
+        genre: data[i][5],
+        typeProfil: data[i][9],
+        roleFoyer: data[i][11]
       });
     }
   }
   return members;
 }
 
+// Alias rétrocompatibilité (ancien système de groupes)
+function getGroupMembers(groupId, excludeId) { return getFoyerMembers(groupId, excludeId); }
+
 // ============================================================================
-//    LIAISON GROUPE PAR ID_GROUPE (sans partage de numéro)
+//    LIAISON FOYER (Phase 2 + Phase 10)
 // ============================================================================
 
-function searchJeunesForGroupLink(query) {
-  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_JEUNES');
+function searchBenefForFoyerLink(query) {
+  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_BENEFICIAIRES');
   const data = ws.getDataRange().getValues();
   let results = [];
   let q = String(query).toLowerCase().trim();
   let qClean = normalizeTel(q);
   
   for (let i = 1; i < data.length; i++) {
-    let nom = String(data[i][3]).toLowerCase();
-    let surnom = String(data[i][4]).toLowerCase();
-    let telClean = normalizeTel(data[i][2]);
+    let prenom = String(data[i][1]).toLowerCase();
+    let nom = String(data[i][2]).toLowerCase();
+    let surnom = String(data[i][3]).toLowerCase();
+    let telClean = normalizeTel(data[i][8]);
     
-    let matchText = nom.includes(q) || surnom.includes(q);
+    let matchText = prenom.includes(q) || nom.includes(q) || surnom.includes(q);
     let matchTel = (qClean.length > 3) && telClean.includes(qClean);
     
     if (matchText || matchTel) {
-      let gid = data[i][1];
       results.push({
         id: data[i][0],
-        nom: data[i][3],
-        surnom: data[i][4],
-        tel: data[i][2],
-        age: data[i][5],
-        lieu: data[i][14],
-        id_groupe: gid || ""
+        nom: data[i][1] + ' ' + (data[i][2] || ''),
+        surnom: data[i][3],
+        tel: data[i][8],
+        age: data[i][4],
+        lieu: data[i][13],
+        id_foyer: data[i][10] || "",
+        typeProfil: data[i][9] || "",
+        roleFoyer: data[i][11] || ""
       });
     }
     if (results.length >= 30) break;
@@ -1038,96 +1149,72 @@ function searchJeunesForGroupLink(query) {
   return results;
 }
 
-function linkJeunesToGroup(sourceJeuneId, targetJeuneIds) {
+// Alias
+function searchJeunesForGroupLink(query) { return searchBenefForFoyerLink(query); }
+
+function linkBenefToFoyer(sourceBenefId, targetBenefIds) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  const wsJeunes = ss.getSheetByName('BDD_JEUNES');
-  const data = wsJeunes.getDataRange().getValues();
+  const wsBenef = ss.getSheetByName('BDD_BENEFICIAIRES');
+  const data = wsBenef.getDataRange().getValues();
   const now = new Date();
   
-  if (!targetJeuneIds || targetJeuneIds.length === 0) {
-    return { success: false, message: "Aucun jeune cible sélectionné." };
+  if (!targetBenefIds || targetBenefIds.length === 0) {
+    return { success: false, message: "Aucun bénéficiaire cible sélectionné." };
   }
   
-  let groupId = null;
+  let foyerId = null;
   let sourceRowIndex = -1;
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === sourceJeuneId) {
+    if (data[i][0] === sourceBenefId) {
       sourceRowIndex = i + 1;
-      groupId = data[i][1] || null;
+      foyerId = data[i][10] || null; // Col K = ID_Foyer
       break;
     }
   }
   
-  if (sourceRowIndex === -1) {
-    return { success: false, message: "Jeune source introuvable." };
-  }
+  if (sourceRowIndex === -1) return { success: false, message: "Bénéficiaire source introuvable." };
   
-  if (!groupId) {
-    groupId = Utilities.getUuid();
-    wsJeunes.getRange(sourceRowIndex, 2).setValue(groupId);
-    let existingHist = String(data[sourceRowIndex - 1][17] || "");
-    let newHist = existingHist ? existingHist + " | Groupe créé le " + formatDate(now) : "Groupe créé le " + formatDate(now);
-    wsJeunes.getRange(sourceRowIndex, 18).setValue(newHist);
+  if (!foyerId) {
+    foyerId = 'FOY' + Utilities.getUuid().substring(0, 8);
+    wsBenef.getRange(sourceRowIndex, 11).setValue(foyerId); // Col K
   }
   
   let linkedCount = 0;
   for (let i = 1; i < data.length; i++) {
-    if (targetJeuneIds.includes(data[i][0])) {
-      let currentGroupId = data[i][1];
-      if (currentGroupId !== groupId) {
-        wsJeunes.getRange(i + 1, 2).setValue(groupId);
-        let existingHist = String(data[i][17] || "");
-        let newHist = existingHist ? existingHist + " | Rejoint groupe le " + formatDate(now) : "Rejoint groupe le " + formatDate(now);
-        wsJeunes.getRange(i + 1, 18).setValue(newHist);
+    if (targetBenefIds.includes(data[i][0])) {
+      if (data[i][10] !== foyerId) {
+        wsBenef.getRange(i + 1, 11).setValue(foyerId); // Col K
         linkedCount++;
       }
     }
   }
   
-  return { success: true, message: linkedCount + " jeune(s) lié(s) au groupe.", groupId: groupId };
+  return { success: true, message: linkedCount + " bénéficiaire(s) lié(s) au foyer.", foyerId: foyerId };
 }
 
-function getGroupIdForLinking(targetJeuneIds) {
-  if (!targetJeuneIds || targetJeuneIds.length === 0) return null;
-  
-  const ss = SpreadsheetApp.openById(SHEET_ID);
-  const wsJeunes = ss.getSheetByName('BDD_JEUNES');
-  const data = wsJeunes.getDataRange().getValues();
-  const now = new Date();
-  
-  let existingGroupId = null;
-  for (let i = 1; i < data.length; i++) {
-    if (targetJeuneIds.includes(data[i][0]) && data[i][1]) {
-      existingGroupId = data[i][1];
-      break;
-    }
-  }
-  
-  if (!existingGroupId) {
-    existingGroupId = Utilities.getUuid();
-  }
-  
-  for (let i = 1; i < data.length; i++) {
-    if (targetJeuneIds.includes(data[i][0])) {
-      if (data[i][1] !== existingGroupId) {
-        wsJeunes.getRange(i + 1, 2).setValue(existingGroupId);
-        let existingHist = String(data[i][17] || "");
-        let newHist = existingHist ? existingHist + " | Groupe lié le " + formatDate(now) : "Groupe lié le " + formatDate(now);
-        wsJeunes.getRange(i + 1, 18).setValue(newHist);
-      }
-    }
-  }
-  
-  return existingGroupId;
+// Alias
+function linkJeunesToGroup(sourceId, targetIds) { return linkBenefToFoyer(sourceId, targetIds); }
+
+// Phase 10 : Formulaire simplifié ajout membre foyer
+function addFoyerMember(form, auteurEmail) {
+  // Pré-remplir l'ID_Foyer et créer un nouveau bénéficiaire lié
+  form.idFoyer = form.foyerId;
+  form.forceGroupId = form.foyerId;
+  return saveBenefSmart(form, auteurEmail, null);
 }
+
 // ============================================================================
-//          PLAIDOYER & STATS — NOUVELLE VERSION DETAILLEE
+//              PLAIDOYER & STATS
 // ============================================================================
+
+function getStatistics(startStr, endStr) {
+  return getStatisticsDetailed(startStr, endStr);
+}
 
 function getStatisticsDetailed(startStr, endStr) {
   try {
     const ss = SpreadsheetApp.openById(SHEET_ID);
-    const wsJeunes = ss.getSheetByName('BDD_JEUNES');
+    const wsBenef = ss.getSheetByName('BDD_BENEFICIAIRES');
     const wsEvents = ss.getSheetByName('BDD_EVENTS');
     const wsConfig = ss.getSheetByName('BDD_CONFIG');
     
@@ -1135,7 +1222,7 @@ function getStatisticsDetailed(startStr, endStr) {
     let end = parseDateSecure(endStr);
     end.setHours(23, 59, 59); 
 
-    const dataJeunes = wsJeunes.getDataRange().getValues();
+    const dataBenef = wsBenef.getDataRange().getValues();
     const dataEvents = wsEvents.getDataRange().getValues();
 
     const dataConfig = wsConfig.getDataRange().getValues();
@@ -1147,302 +1234,98 @@ function getStatisticsDetailed(startStr, endStr) {
         if (!key) continue;
         let values = [];
         for (let row = 1; row < dataConfig.length; row++) {
-          if (dataConfig[row][col] !== "") {
-            values.push(String(dataConfig[row][col]));
-          }
+          if (dataConfig[row][col] !== "") values.push(String(dataConfig[row][col]));
         }
         configLists[key] = values;
       }
     }
 
-    let presents = 0;
-    let mineurs_moins_15 = 0;
-    let filles = 0;
-    let nouveaux = 0;
-
-    let countNationalites = {};
-    let countLangues = {};
-    let countStatutPresence = {};
-    let countStatutsMab = {};
-    let countVulnerabilitesTags = {};
-    let countLieuxVie = {};
-
-    let countTypesEvenements = {};
-    let countMotifStatutMab = {};
-    let countMateriel = {};
-    let countTypesContact = {};
+    let presents = 0, nouveaux = 0;
+    let countNationalites = {}, countLangues = {}, countStatutPresence = {};
+    let countStatutInstitution = {}, countVulnerabilitesTags = {}, countLieuxVie = {};
+    let countTypesEvenements = {}, countMotifStatutInstitution = {}, countMateriel = {}, countTypesContact = {};
+    // Phase 2 : Stats par profil, genre, foyer
+    let countTypesProfils = {}, countGenres = {}, countRolesFoyer = {};
+    let foyerSet = new Set();
 
     function incrementMulti(counterObj, rawValue) {
       if (!rawValue) return;
-      var str = String(rawValue);
-      str.split(',').forEach(function(part) {
+      String(rawValue).split(',').forEach(function(part) {
         var trimmed = part.trim();
-        if (trimmed !== "" && !trimmed.startsWith('---')) {
-          counterObj[trimmed] = (counterObj[trimmed] || 0) + 1;
-        }
+        if (trimmed !== "" && !trimmed.startsWith('---')) counterObj[trimmed] = (counterObj[trimmed] || 0) + 1;
       });
     }
 
     function incrementSingle(counterObj, rawValue) {
       if (!rawValue) return;
       var trimmed = String(rawValue).trim();
-      if (trimmed !== "" && !trimmed.startsWith('---')) {
-        counterObj[trimmed] = (counterObj[trimmed] || 0) + 1;
-      }
+      if (trimmed !== "" && !trimmed.startsWith('---')) counterObj[trimmed] = (counterObj[trimmed] || 0) + 1;
     }
 
-    for (let i = 1; i < dataJeunes.length; i++) {
-      let dateCreation = parseDateSecure(dataJeunes[i][18]);
-      let statutPres = String(dataJeunes[i][9] || "").trim();
-      let genre = String(dataJeunes[i][6]).toUpperCase();
-      let age = dataJeunes[i][5];
-      let nationalite = String(dataJeunes[i][7] || "");
-      let langue = String(dataJeunes[i][8] || "");
-      let statutMab = String(dataJeunes[i][10] || "");
-      let vulns = String(dataJeunes[i][15] || "");
-      let lieuVie = String(dataJeunes[i][14] || "");
-
-      incrementSingle(countStatutPresence, statutPres);
-      incrementSingle(countStatutsMab, statutMab);
-      incrementSingle(countNationalites, nationalite);
-      incrementMulti(countLangues, langue);
-      incrementMulti(countVulnerabilitesTags, vulns);
-      incrementSingle(countLieuxVie, lieuVie);
-
-      let presLower = statutPres.toLowerCase();
-      if (presLower.includes("présent")) {
-        presents++;
-      }
-
-      if (age && parseInt(age) < 15) {
-        mineurs_moins_15++;
-      }
-
-      if (genre === "F" || genre === "FEMININ" || genre === "FILLE") {
-        filles++;
-      }
-
-      if (dateCreation >= start && dateCreation <= end) {
-        nouveaux++;
-      }
-    }
-
-    for (let j = 1; j < dataEvents.length; j++) {
-      let dateEvt = parseDateSecure(dataEvents[j][2]);
-      if (dateEvt >= start && dateEvt <= end) {
-        let typeEvent = String(dataEvents[j][3] || "");
-        let typeContact = String(dataEvents[j][4] || "");
-        let motif = String(dataEvents[j][9] || "");
-        let materiel = String(dataEvents[j][11] || "");
-
-        incrementSingle(countTypesEvenements, typeEvent);
-        incrementMulti(countTypesContact, typeContact);
-        incrementMulti(countMotifStatutMab, motif);
-        incrementMulti(countMateriel, materiel);
-      }
-    }
-
-    let orphelins = {};
-
-    function detectOrphelins(counterObj, configKey) {
-      var configItems = configLists[configKey] || [];
-      var cleanConfig = configItems.filter(function(item) {
-        return !String(item).startsWith('---');
-      });
-      for (var item in counterObj) {
-        if (counterObj.hasOwnProperty(item) && counterObj[item] > 0) {
-          var found = false;
-          for (var c = 0; c < cleanConfig.length; c++) {
-            if (cleanConfig[c] === item) {
-              found = true;
-              break;
-            }
-          }
-          if (!found) {
-            orphelins[item + " (" + configKey + ")"] = counterObj[item];
-          }
-        }
-      }
-    }
-
-    detectOrphelins(countNationalites, "NATIONALITES");
-    detectOrphelins(countLangues, "LANGUES");
-    detectOrphelins(countTypesEvenements, "TYPES_EVENEMENTS");
-    detectOrphelins(countStatutPresence, "STATUT_PRESENCE");
-    detectOrphelins(countStatutsMab, "STATUTS_MAB");
-    detectOrphelins(countMotifStatutMab, "MOTIF_STATUT_MAB");
-    detectOrphelins(countMateriel, "MATERIEL");
-    detectOrphelins(countVulnerabilitesTags, "VULNERABILITES_TAGS");
-    detectOrphelins(countTypesContact, "TYPES_CONTACT");
-    detectOrphelins(countLieuxVie, "LIEUX_VIE");
-
-    function sumValues(obj) {
-      var total = 0;
-      for (var k in obj) {
-        if (obj.hasOwnProperty(k)) total += obj[k];
-      }
-      return total;
-    }
-
-    return {
-      presents: presents,
-      mineurs_moins_15: mineurs_moins_15,
-      filles: filles,
-      nouveaux: nouveaux,
-
-      nationalites: countNationalites,
-      langues: countLangues,
-      types_evenements: countTypesEvenements,
-      total_types_evenements: sumValues(countTypesEvenements),
-      statut_presence: countStatutPresence,
-      statuts_mab: countStatutsMab,
-      motif_statut_mab: countMotifStatutMab,
-      total_motif_statut_mab: sumValues(countMotifStatutMab),
-      materiel: countMateriel,
-      total_materiel: sumValues(countMateriel),
-      vulnerabilites_tags: countVulnerabilitesTags,
-      total_vulnerabilites_tags: sumValues(countVulnerabilitesTags),
-      types_contact: countTypesContact,
-      total_types_contact: sumValues(countTypesContact),
-      lieux_vie: countLieuxVie,
-
-      orphelins: orphelins,
-
-      config_lists: configLists,
-
-      periode_debut: formatDate(start),
-      periode_fin: formatDate(end)
-    };
-
-  } catch(e) {
-    throw new Error("Erreur calcul stats détaillées: " + e.toString());
-  }
-}
-
-// ============================================================================
-// getStatistics() CONSERVEE pour compatibilité avec le dashboard
-// ============================================================================
-
-function getStatistics(startStr, endStr) {
-  try {
-    const ss = SpreadsheetApp.openById(SHEET_ID);
-    const wsJeunes = ss.getSheetByName('BDD_JEUNES');
-    const wsEvents = ss.getSheetByName('BDD_EVENTS');
+    // Stats bénéficiaires (stock)
+    let total_actifs = 0;
+    let jeunes_with_events = new Set();
     
-    let start = parseDateSecure(startStr);
-    let end = parseDateSecure(endStr);
-    end.setHours(23, 59, 59); 
+    for (let i = 1; i < dataBenef.length; i++) {
+      let presLower = String(dataBenef[i][12] || "").toLowerCase();
+      let isActif = presLower.includes("présent") || presLower.includes("foyer") || presLower.includes("hospitalisé");
+      if (isActif) { presents++; total_actifs++; }
+      
+      // Création dans la période ?
+      let dateCreation = dataBenef[i][20];
+      if (dateCreation) {
+        try {
+          let dc = new Date(dateCreation);
+          if (dc >= start && dc <= end) nouveaux++;
+        } catch(e) {}
+      }
+      
+      incrementSingle(countNationalites, dataBenef[i][6]);
+      incrementMulti(countLangues, dataBenef[i][7]);
+      incrementSingle(countStatutPresence, dataBenef[i][12]);
+      incrementSingle(countStatutInstitution, dataBenef[i][14]);
+      incrementSingle(countLieuxVie, dataBenef[i][13]);
+      incrementMulti(countVulnerabilitesTags, dataBenef[i][16]);
+      // Phase 2
+      incrementSingle(countTypesProfils, dataBenef[i][9]);
+      incrementSingle(countGenres, dataBenef[i][5]);
+      incrementSingle(countRolesFoyer, dataBenef[i][11]);
+      if (dataBenef[i][10]) foyerSet.add(dataBenef[i][10]);
+    }
 
-    const dataJeunes = wsJeunes.getDataRange().getValues();
-    const dataEvents = wsEvents.getDataRange().getValues();
+    // Stats événements (période)
+    let total_events = 0;
+    for (let i = 1; i < dataEvents.length; i++) {
+      let evDate = null;
+      try { evDate = new Date(dataEvents[i][2]); } catch(e) { continue; }
+      if (!evDate || isNaN(evDate.getTime())) continue;
+      if (evDate < start || evDate > end) continue;
+      
+      total_events++;
+      jeunes_with_events.add(dataEvents[i][1]);
+      incrementSingle(countTypesEvenements, dataEvents[i][3]);
+      incrementMulti(countTypesContact, dataEvents[i][4]);
+      incrementSingle(countMotifStatutInstitution, dataEvents[i][9]);
+      incrementMulti(countMateriel, dataEvents[i][11]);
+    }
 
     let stats = {
-      nouveaux: 0,
-      total_actifs: 0,
-      mineurs_moins_15: 0,
-      filles: 0,
-      sous_emprise: 0,
-      
-      referencements_instit: 0,
-      refus_police: 0,
-      refus_dept: 0,
-      mab_validees: 0,
-      
-      departs_uk: 0,
-      retours_try: 0,
-      evictions: 0,
-      urgences_sante: 0,
-      tentes_distribuees: 0,
-      
-      total_events_period: 0,
-      jeunes_with_events: new Set(),
-      
-      nationalites: {},
-      ages: {},
-      vulnerabilites: {},
-      vulnerabilites_periode: {}
+      periode_debut: startStr, periode_fin: endStr,
+      total_actifs: total_actifs,
+      presents: presents, nouveaux: nouveaux,
+      total_events: total_events,
+      total_foyers: foyerSet.size, // Phase 2
+      nationalites: countNationalites, langues: countLangues,
+      statut_presence: countStatutPresence,
+      statut_institution: countStatutInstitution, // Phase 1 : renommé
+      lieux_vie: countLieuxVie, vulnerabilites_tags: countVulnerabilitesTags,
+      types_evenements: countTypesEvenements, motif_statut_institution: countMotifStatutInstitution,
+      materiel: countMateriel, types_contact: countTypesContact,
+      // Phase 2
+      types_profils: countTypesProfils, genres: countGenres, roles_foyer: countRolesFoyer,
+      config_lists: configLists,
+      jeunes_with_events: jeunes_with_events.size
     };
-
-    for (let i = 1; i < dataJeunes.length; i++) {
-      let dateCreation = parseDateSecure(dataJeunes[i][18]);
-      let statutPres = String(dataJeunes[i][9] || "").toLowerCase().trim();
-      let genre = String(dataJeunes[i][6]).toUpperCase();
-      let vulns = String(dataJeunes[i][15]).toLowerCase();
-      let age = dataJeunes[i][5];
-
-      if (statutPres.includes("présent") || statutPres.includes("mab (foyer)")) {
-        stats.total_actifs++;
-        
-        if (age && parseInt(age) < 15) stats.mineurs_moins_15++;
-        if (genre === "F" || genre === "FEMININ") stats.filles++;
-        if (vulns.includes("emprise")) stats.sous_emprise++;
-        
-        if(vulns) {
-          vulns.split(',').forEach(v => {
-            let vt = v.trim();
-            if(vt) stats.vulnerabilites[vt] = (stats.vulnerabilites[vt] || 0) + 1;
-          });
-        }
-      }
-
-      if (dateCreation >= start && dateCreation <= end) {
-        stats.nouveaux++;
-        let nat = dataJeunes[i][7] || "Inconnue";
-        stats.nationalites[nat] = (stats.nationalites[nat] || 0) + 1;
-        
-        let tranche = "Inconnu";
-        if (age) {
-          let a = parseInt(age);
-          if (a < 15) tranche = "-15 ans";
-          else if (a < 18) tranche = "15-17 ans";
-          else tranche = "18+ ans";
-        }
-        stats.ages[tranche] = (stats.ages[tranche] || 0) + 1;
-      }
-    }
-
-    for (let j = 1; j < dataEvents.length; j++) {
-      let dateEvt = parseDateSecure(dataEvents[j][2]);
-      if (dateEvt >= start && dateEvt <= end) {
-        let type = String(dataEvents[j][3]).toLowerCase();
-        let details = String(dataEvents[j][6]).toLowerCase();
-        let motif = String(dataEvents[j][9]).toLowerCase();
-        let materiel = String(dataEvents[j][11]).toLowerCase();
-        let idJeune = dataEvents[j][1];
-        let newVulnsEvt = String(dataEvents[j][10] || "").toLowerCase();
-
-        stats.total_events_period++;
-        stats.jeunes_with_events.add(idJeune);
-
-        if (type.includes("départ uk") || type.includes("parti")) stats.departs_uk++;
-        if (type.includes("retour de try")) stats.retours_try++;
-        if (type.includes("éviction")) stats.evictions++;
-        if (type.includes("santé") || type.includes("urgence")) stats.urgences_sante++;
-        
-        if (type.includes("demande mab") || type.includes("référencement")) stats.referencements_instit++;
-        if (type.includes("prise en charge") || type.includes("validée")) stats.mab_validees++;
-
-        if (type.includes("refus") || motif.includes("refus")) {
-          if (motif.includes("police") || motif.includes("paf")) stats.refus_police++;
-          else if (motif.includes("département") || motif.includes("ase") || motif.includes("social")) stats.refus_dept++;
-        }
-
-        if (materiel.includes("tente")) stats.tentes_distribuees++;
-        
-        if (newVulnsEvt) {
-          newVulnsEvt.split(',').forEach(v => {
-            let vt = v.trim();
-            if(vt) stats.vulnerabilites_periode[vt] = (stats.vulnerabilites_periode[vt] || 0) + 1;
-          });
-        }
-      }
-    }
-
-    stats.nb_jeunes_concernes = stats.jeunes_with_events.size;
-    stats.avg_event_per_youth = stats.nb_jeunes_concernes > 0 ? (stats.total_events_period / stats.nb_jeunes_concernes).toFixed(1) : 0;
-    stats.avg_eviction_per_youth = stats.total_actifs > 0 ? (stats.evictions / stats.total_actifs).toFixed(2) : 0; 
-
-    stats.jeunes_with_events = stats.jeunes_with_events.size;
 
     return stats;
 
@@ -1452,126 +1335,126 @@ function getStatistics(startStr, endStr) {
 }
 
 // ============================================================================
-//                     B3 : RAPPORT IP AMELIORE (PLAIDOYER)
+//     Phase 4 : RAPPORT IP / SIGNALEMENT DYNAMIQUE PAR TYPE DE PROFIL
 // ============================================================================
 
-function generateReportText(idJeune) {
-  const info = getFicheJeune(idJeune); 
-  if (!info.success) return "Erreur: Jeune introuvable.";
+function generateReportText(idBenef) {
+  const info = getFicheBenef(idBenef); 
+  if (!info.success) return "Erreur: Bénéficiaire introuvable.";
   
-  const j = info.jeune;
+  const b = info.benef;
   const hist = info.history;
+  const antenneConfig = getAntenneConfig_();
+  
+  // Phase 4 : Vérifier si le rapport IP est actif pour cette antenne
+  if (antenneConfig.RAPPORT_IP_ACTIF && antenneConfig.RAPPORT_IP_ACTIF.toUpperCase() !== 'OUI') {
+    return "Le rapport IP n'est pas activé pour cette antenne.";
+  }
   
   const aujourdhui = formatDate(new Date());
+  const nomAntenne = antenneConfig.NOM_ANTENNE || 'Utopia 56';
+  const contactSignalement = antenneConfig.CONTACT_SIGNALEMENT || '[À compléter]';
   
   let chronoHist = [...hist].reverse();
   let premierEvt = chronoHist.length > 0 ? chronoHist[0].date : "Inconnue";
   
-  let nbEvictions = 0;
-  let nbViolencesPolice = 0;
-  let nbViolencesTiers = 0;
-  let nbTentatives = 0;
-  let nbUrgencesSante = 0;
-  let nbRefus = 0;
+  // Compteurs d'événements
+  let nbEvictions = 0, nbViolencesPolice = 0, nbViolencesTiers = 0;
+  let nbTentatives = 0, nbUrgencesSante = 0, nbRefus = 0;
   
   chronoHist.forEach(function(evt) {
     let typeLower = String(evt.type).toLowerCase();
-    if (typeLower.includes("éviction")) nbEvictions++;
-    if (typeLower.includes("violences policières") || typeLower.includes("police")) nbViolencesPolice++;
-    if (typeLower.includes("violences tiers") || typeLower.includes("passeur")) nbViolencesTiers++;
-    if (typeLower.includes("retour de try") || typeLower.includes("départ uk")) nbTentatives++;
+    if (typeLower.includes("éviction") || typeLower.includes("expulsion")) nbEvictions++;
+    if (typeLower.includes("violence") && typeLower.includes("polic")) nbViolencesPolice++;
+    if (typeLower.includes("violence") && (typeLower.includes("tiers") || typeLower.includes("passeur"))) nbViolencesTiers++;
+    if (typeLower.includes("traversée") || typeLower.includes("départ")) nbTentatives++;
     if (typeLower.includes("santé") || typeLower.includes("urgence") || typeLower.includes("hospitalisation")) nbUrgencesSante++;
     if (typeLower.includes("refus")) nbRefus++;
   });
   
+  // Phase 4 : Adapter le rapport selon le Type_Profil
+  var typeProfil = b.type_profil || '';
+  var isMNA = typeProfil.toLowerCase().includes('mna');
+  var isFamille = typeProfil.toLowerCase().includes('famille') || typeProfil.toLowerCase().includes('couple');
+  var isMineur = isMNA; // On peut aussi vérifier l'âge
+  
   let txt = "";
   txt += "=========================================================================\n";
-  txt += "              INFORMATION PRÉOCCUPANTE (IP)\n";
-  txt += "              SIGNALEMENT - MINEUR NON ACCOMPAGNÉ\n";
-  txt += "=========================================================================\n\n";
   
-  txt += "Émetteur : Association Utopia 56 - Antenne Grande-Synthe\n";
-  txt += "Date du signalement : " + aujourdhui + "\n";
-  txt += "Destinataire : Cellule de Recueil des Informations Préoccupantes (CRIP)\n";
-  txt += "               Procureur de la République (le cas échéant)\n\n";
-  
-  txt += "-------------------------------------------------------------------------\n";
-  txt += "FONDEMENT JURIDIQUE\n";
-  txt += "-------------------------------------------------------------------------\n";
-  txt += "Le présent signalement est effectué sur le fondement des articles :\n";
-  txt += "- L.112-3 du Code de l'Action Sociale et des Familles (CASF) : \n";
-  txt += "  \"La protection de l'enfance vise à garantir la prise en compte des \n";
-  txt += "  besoins fondamentaux de l'enfant.\"\n";
-  txt += "- L.223-2 du CASF relatif à la mise à l'abri immédiate des mineurs \n";
-  txt += "  non accompagnés.\n";
-  txt += "- Article 375 du Code Civil relatif à l'assistance éducative.\n";
-  txt += "- Convention Internationale des Droits de l'Enfant (CIDE), notamment \n";
-  txt += "  l'article 3 (intérêt supérieur de l'enfant) et l'article 20 \n";
-  txt += "  (protection de l'enfant privé de son milieu familial).\n\n";
-  
-  txt += "=========================================================================\n";
-  txt += "1. IDENTIFICATION DU MINEUR\n";
-  txt += "=========================================================================\n\n";
-  txt += "Nom / Alias        : " + j.nom + "\n";
-  txt += "Surnom              : " + (j.surnom || "Non renseigné") + "\n";
-  txt += "Âge déclaré         : " + j.age + " ans\n";
-  txt += "Genre               : " + (j.genre || "Non renseigné") + "\n";
-  txt += "Nationalité         : " + j.nationalite + "\n";
-  txt += "Langue(s) parlée(s) : " + (j.langue || "Non renseignée") + "\n";
-  txt += "Téléphone           : " + (j.tel || "Non renseigné") + "\n";
-  txt += "Premier contact     : " + premierEvt + "\n\n";
-  
-  txt += "=========================================================================\n";
-  txt += "2. SITUATION ACTUELLE - ÉLÉMENTS DE DANGER\n";
-  txt += "=========================================================================\n\n";
-  txt += "Lieu de vie actuel  : " + j.lieu_vie + "\n";
-  txt += "Statut présence     : " + j.statut_presence + "\n";
-  txt += "Statut MAB          : " + j.statut_mab + "\n\n";
-  
-  txt += "Vulnérabilités identifiées :\n";
-  if (j.vulnerabilites) {
-    j.vulnerabilites.split(',').forEach(function(v) {
-      txt += "  • " + v.trim() + "\n";
-    });
+  if (isMNA) {
+    txt += "              INFORMATION PRÉOCCUPANTE (IP)\n";
+    txt += "              SIGNALEMENT - MINEUR NON ACCOMPAGNÉ\n";
+  } else if (isFamille) {
+    txt += "              SIGNALEMENT\n";
+    txt += "              FAMILLE EN SITUATION DE DANGER\n";
   } else {
-    txt += "  Aucune vulnérabilité spécifique notée à ce jour.\n";
+    txt += "              SIGNALEMENT\n";
+    txt += "              PERSONNE EN SITUATION DE VULNÉRABILITÉ\n";
   }
+  txt += "=========================================================================\n\n";
+  
+  txt += "Émetteur : Association Utopia 56 - Antenne " + nomAntenne + "\n";
+  txt += "Date du signalement : " + aujourdhui + "\n";
+  
+  if (isMNA) {
+    txt += "Destinataire : Cellule de Recueil des Informations Préoccupantes (CRIP)\n";
+    txt += "               Procureur de la République (le cas échéant)\n\n";
+  } else {
+    txt += "Destinataire : " + contactSignalement + "\n\n";
+  }
+  
+  if (isMNA) {
+    txt += "-------------------------------------------------------------------------\n";
+    txt += "FONDEMENT JURIDIQUE\n";
+    txt += "-------------------------------------------------------------------------\n";
+    txt += "Le présent signalement est effectué sur le fondement des articles :\n";
+    txt += "- L.112-3 du Code de l'Action Sociale et des Familles (CASF)\n";
+    txt += "- L.223-2 du CASF relatif à la mise à l'abri immédiate des mineurs\n";
+    txt += "  non accompagnés.\n";
+    txt += "- Article 375 du Code Civil relatif à l'assistance éducative.\n";
+    txt += "- Convention Internationale des Droits de l'Enfant (CIDE)\n\n";
+  }
+  
+  txt += "=========================================================================\n";
+  txt += "1. IDENTIFICATION\n";
+  txt += "=========================================================================\n\n";
+  txt += "Prénom / Nom     : " + (b.prenom || "") + " " + (b.nom || "(inconnu)") + "\n";
+  if (b.surnom) txt += "Surnom           : " + b.surnom + "\n";
+  txt += "Date de naissance: " + (b.date_naissance ? formatDate(b.date_naissance) : "Non connue") + "\n";
+  txt += "Genre            : " + (b.genre || "Non connu") + "\n";
+  txt += "Nationalité      : " + (b.nationalite || "Non connue") + "\n";
+  txt += "Type de profil   : " + (b.type_profil || "Non précisé") + "\n";
+  txt += "Téléphone        : " + (b.tel || "Non connu") + "\n";
+  txt += "Premier contact  : " + premierEvt + "\n\n";
+  
+  // Phase 10 : Si foyer, ajouter les membres
+  if (b.id_foyer) {
+    var membres = getFoyerMembers(b.id_foyer, b.id);
+    if (membres.length > 0) {
+      txt += "COMPOSITION DU FOYER :\n";
+      membres.forEach(function(m) {
+        txt += "  - " + m.prenom + " " + (m.nom || '') + " (" + (m.roleFoyer || 'membre') + ", " + (m.genre || '?') + ")\n";
+      });
+      txt += "\n";
+    }
+  }
+  
+  txt += "=========================================================================\n";
+  txt += "2. SITUATION ACTUELLE\n";
+  txt += "=========================================================================\n\n";
+  txt += "Lieu de vie       : " + (b.lieu_vie || "Inconnu") + "\n";
+  txt += "Statut présence   : " + (b.statut_presence || "Non renseigné") + "\n";
+  txt += "Statut institution: " + (b.statut_institution || "Aucun") + "\n";
+  if (b.vulnerabilites) txt += "Vulnérabilités    : " + b.vulnerabilites + "\n";
   txt += "\n";
   
-  if (j.notes_fixes) {
-    txt += "Informations complémentaires importantes :\n";
-    txt += "  " + j.notes_fixes + "\n\n";
-  }
-  
-  if (j.labels_autres) {
-    txt += "Suivi par d'autres acteurs : " + j.labels_autres + "\n\n";
-  }
-  
-  txt += "ÉLÉMENTS CARACTÉRISANT LA SITUATION DE DANGER :\n\n";
-  txt += "Ce mineur non accompagné vit actuellement en extérieur sur le site de \n";
-  txt += j.lieu_vie + ", sans hébergement stable ni protection adulte. ";
-  txt += "Il/elle est exposé(e) aux intempéries, aux violences, et ne bénéficie \n";
-  txt += "d'aucun cadre protecteur adapté à sa minorité.\n\n";
-  
-  if (nbEvictions > 0) {
-    txt += "- Le/la jeune a subi " + nbEvictions + " éviction(s) de son lieu de vie, \n";
-    txt += "  aggravant sa précarité et son errance.\n";
-  }
-  if (nbViolencesPolice > 0) {
-    txt += "- " + nbViolencesPolice + " épisode(s) de violences policières ont été \n";
-    txt += "  documenté(s), constituant des atteintes graves à son intégrité physique.\n";
-  }
-  if (nbViolencesTiers > 0) {
-    txt += "- " + nbViolencesTiers + " épisode(s) de violences par des tiers ou passeurs \n";
-    txt += "  ont été rapporté(s), exposant ce mineur à un risque d'exploitation.\n";
-  }
-  if (nbUrgencesSante > 0) {
-    txt += "- " + nbUrgencesSante + " urgence(s) de santé ont nécessité une intervention.\n";
-  }
-  if (nbRefus > 0) {
-    txt += "- " + nbRefus + " refus de mise à l'abri ont été opposés à ce mineur, \n";
-    txt += "  le/la maintenant dans une situation de danger.\n";
-  }
+  txt += "INDICATEURS DE DANGER :\n";
+  if (nbEvictions > 0) txt += "  ⚠ " + nbEvictions + " éviction(s) / expulsion(s) documentée(s)\n";
+  if (nbViolencesPolice > 0) txt += "  ⚠ " + nbViolencesPolice + " violence(s) policière(s) documentée(s)\n";
+  if (nbViolencesTiers > 0) txt += "  ⚠ " + nbViolencesTiers + " violence(s) de tiers documentée(s)\n";
+  if (nbTentatives > 0) txt += "  ⚠ " + nbTentatives + " tentative(s) de traversée\n";
+  if (nbUrgencesSante > 0) txt += "  ⚠ " + nbUrgencesSante + " urgence(s) de santé\n";
+  if (nbRefus > 0) txt += "  ⚠ " + nbRefus + " refus institutionnel(s)\n";
   txt += "\n";
   
   txt += "=========================================================================\n";
@@ -1592,30 +1475,37 @@ function generateReportText(idJeune) {
   txt += "=========================================================================\n";
   txt += "4. DEMANDE\n";
   txt += "=========================================================================\n\n";
-  txt += "Au regard de la situation de danger décrite ci-dessus, l'association \n";
-  txt += "Utopia 56 demande :\n\n";
-  txt += "  1. La mise à l'abri IMMÉDIATE de ce mineur conformément à l'article \n";
-  txt += "     L.223-2 du CASF.\n";
-  txt += "  2. L'évaluation de sa minorité et de son isolement dans des conditions \n";
-  txt += "     respectueuses de ses droits fondamentaux.\n";
-  txt += "  3. L'ouverture d'une mesure de protection adaptée.\n\n";
   
-  txt += "Nous rappelons que l'article L.112-3 du CASF impose aux autorités \n";
-  txt += "compétentes de garantir la prise en compte des besoins fondamentaux \n";
-  txt += "de l'enfant et que tout mineur présent sur le territoire français, \n";
-  txt += "quelle que soit sa nationalité, bénéficie de la protection de l'enfance.\n\n";
+  if (isMNA) {
+    txt += "Au regard de la situation de danger décrite ci-dessus, l'association \n";
+    txt += "Utopia 56 demande :\n\n";
+    txt += "  1. La mise à l'abri IMMÉDIATE de ce mineur conformément à l'article \n";
+    txt += "     L.223-2 du CASF.\n";
+    txt += "  2. L'évaluation de sa minorité et de son isolement dans des conditions \n";
+    txt += "     respectueuses de ses droits fondamentaux.\n";
+    txt += "  3. L'ouverture d'une mesure de protection adaptée.\n\n";
+    txt += "Nous rappelons que l'article L.112-3 du CASF impose aux autorités \n";
+    txt += "compétentes de garantir la prise en compte des besoins fondamentaux \n";
+    txt += "de l'enfant et que tout mineur présent sur le territoire français, \n";
+    txt += "quelle que soit sa nationalité, bénéficie de la protection de l'enfance.\n\n";
+  } else {
+    txt += "Au regard de la situation de vulnérabilité décrite ci-dessus, \n";
+    txt += "l'association Utopia 56 signale cette situation et demande une prise \n";
+    txt += "en charge adaptée dans les meilleurs délais.\n\n";
+  }
   
   txt += "=========================================================================\n";
   txt += "Signalement transmis par :\n";
-  txt += "Association Utopia 56 - Antenne Grande-Synthe\n";
-  txt += "Contact : [À compléter]\n";
+  txt += "Association Utopia 56 - Antenne " + nomAntenne + "\n";
+  txt += "Contact : " + contactSignalement + "\n";
   txt += "Date : " + aujourdhui + "\n";
   txt += "=========================================================================\n";
   
   return txt;
 }
+
 // ============================================================================
-//          PHASE 3 : WIDGET CONFIG ITEMS POUR PLAIDOYER
+//          WIDGET CONFIG ITEMS POUR PLAIDOYER
 // ============================================================================
 
 function getWidgetConfigItems() {
@@ -1644,34 +1534,31 @@ function getWidgetConfigItems() {
 }
 
 // ============================================================================
-//  CHERCHER dans Code.gs la fonction computeAllWidgets (ajoutée en Phase 3)
-//  ET LA REMPLACER ENTIÈREMENT par celle-ci.
-//  
-//  La fonction getWidgetConfigItems() reste inchangée.
+//          COMPUTE ALL WIDGETS
 // ============================================================================
 
 function computeAllWidgets(widgets, startStr, endStr) {
   var stats = getStatisticsDetailed(startStr, endStr);
-  var subcards = { 'presents': 'Présents', 'mineurs_moins_15': 'Moins de 15 ans', 'filles': 'Filles', 'nouveaux': 'Nouveaux' };
+  var subcards = { 'presents': 'Présents', 'nouveaux': 'Nouveaux', 'total_foyers': 'Foyers' };
   var results = {};
   var ss = SpreadsheetApp.openById(SHEET_ID);
   
-  // Charger les données une seule fois
-  var wsJ = ss.getSheetByName('BDD_JEUNES');
-  var wsE = ss.getSheetByName('BDD_EVENTS');
-  var dJ = wsJ.getDataRange().getValues();
-  var dE = wsE.getDataRange().getValues();
+  var wsBenef = ss.getSheetByName('BDD_BENEFICIAIRES');
+  var wsEvents = ss.getSheetByName('BDD_EVENTS');
+  var dB = wsBenef.getDataRange().getValues();
+  var dE = wsEvents.getDataRange().getValues();
   var start = parseDateSecure(startStr);
   var end = parseDateSecure(endStr);
   end.setHours(23, 59, 59);
   
-  var jeunesFields = { 
-    'statut_presence': 9, 'statut_mab': 10, 'nationalite': 7, 'genre': 6, 
-    'lieu_vie': 14, 'vulnerabilites': 15, 'langue': 8, 'age': 5, 'labels': 20 
+  // Phase 1+2 : Index des colonnes mis à jour pour BDD_BENEFICIAIRES
+  var benefFields = { 
+    'statut_presence': 12, 'statut_institution': 14, 'nationalite': 6, 'genre': 5, 
+    'lieu_vie': 13, 'vulnerabilites': 16, 'langue': 7, 'type_profil': 9, 'role_foyer': 11
   };
   var eventsFields = { 
     'type_evenement': 3, 'type_contact': 4, 'lieu_event': 5, 
-    'motif_statut_mab': 9, 'materiel': 11 
+    'motif_statut_institution': 9, 'materiel': 11 
   };
   
   widgets.forEach(function(widget) {
@@ -1696,213 +1583,109 @@ function computeAllWidgets(widgets, startStr, endStr) {
             listResults.push({ name: it.name, count: val });
           }
         });
-        results[widget.id] = { items: listResults };
+        results[widget.id] = { items: listResults, total: listResults.reduce(function(s, i) { return s + i.count; }, 0) };
         
       } else if (widget.type === 'custom_stat') {
-        // NOUVEAU : Support conditions multiples (jeunes ET/OU events)
         var conditions = widget.conditions || [];
-        if (conditions.length === 0 && widget.query) {
-          // Rétrocompatibilité ancien format single query
-          conditions = [widget.query];
-        }
+        var resultMode = widget.resultMode || 'jeunes';
+        var matchedBenef = new Set();
+        var matchedEvents = 0;
         
-        // Séparer les conditions jeunes et events
-        var condJeunes = [];
-        var condEvents = [];
-        conditions.forEach(function(c) {
-          if (c.source === 'events') condEvents.push(c);
-          else condJeunes.push(c);
-        });
+        var benefConditions = conditions.filter(function(c) { return c.source === 'jeunes' || c.source === 'benef'; });
+        var eventConditions = conditions.filter(function(c) { return c.source === 'events'; });
         
-        // Calculer les IDs de jeunes matchant les conditions jeunes
-        var jeuneIdsPool = null; // null = pas de filtre jeunes (tous)
-        
-        if (condJeunes.length > 0) {
-          jeuneIdsPool = new Set();
-          for (var i = 1; i < dJ.length; i++) {
-            var matchAll = true;
-            
-            // Filtre actifs uniquement (si au moins une condition le demande)
-            var needActive = condJeunes.some(function(c) { return c.activeOnly; });
-            if (needActive) {
-              var sP = String(dJ[i][9] || "").toLowerCase();
-              if (!(sP.includes("présent") || sP.includes("mab (foyer)") || sP.includes("hospitalisé"))) {
-                continue;
-              }
-            }
-            
-            for (var ci = 0; ci < condJeunes.length; ci++) {
-              var c = condJeunes[ci];
-              var colIdx = jeunesFields[c.field];
-              if (colIdx === undefined) { matchAll = false; break; }
-              var cV = String(dJ[i][colIdx] || "").toLowerCase();
-              var qV = String(c.value || "").toLowerCase();
-              
-              if (!matchCondition(cV, c.operator, qV)) {
-                matchAll = false;
-                break;
-              }
-            }
-            if (matchAll) jeuneIdsPool.add(dJ[i][0]);
+        for (var bi = 1; bi < dB.length; bi++) {
+          var allBenefMatch = true;
+          for (var ci = 0; ci < benefConditions.length; ci++) {
+            var cond = benefConditions[ci];
+            var colIdx = benefFields[cond.field];
+            if (colIdx === undefined) { allBenefMatch = false; break; }
+            var cellVal = String(dB[bi][colIdx] || '').toLowerCase();
+            var condVal = String(cond.value || '').toLowerCase();
+            if (cond.operator === 'equals' && cellVal !== condVal) { allBenefMatch = false; break; }
+            if (cond.operator === 'contains' && !cellVal.includes(condVal)) { allBenefMatch = false; break; }
+            if (cond.operator === 'not_equals' && cellVal === condVal) { allBenefMatch = false; break; }
+          }
+          if (allBenefMatch || benefConditions.length === 0) {
+            if (eventConditions.length === 0 && benefConditions.length > 0) matchedBenef.add(dB[bi][0]);
           }
         }
         
-        // Si pas de conditions events, le résultat = taille du pool jeunes
-        if (condEvents.length === 0) {
-          var count = jeuneIdsPool ? jeuneIdsPool.size : 0;
-          var total = 0;
-          for (var t = 1; t < dJ.length; t++) total++;
-          var pct = total > 0 ? Math.round((count / total) * 100) : 0;
-          results[widget.id] = { value: count, total: total, percentage: pct };
-        } else {
-          // Filtrer les events par conditions events + pool jeunes
-          var matchedJeunes = new Set();
-          var totalEventsChecked = 0;
-          var matchedEvents = 0;
+        for (var ei = 1; ei < dE.length; ei++) {
+          var evDate = null;
+          try { evDate = new Date(dE[ei][2]); } catch(e) { continue; }
+          if (!evDate || isNaN(evDate.getTime()) || evDate < start || evDate > end) continue;
           
-          for (var j = 1; j < dE.length; j++) {
-            var dateEvt = parseDateSecure(dE[j][2]);
-            if (dateEvt < start || dateEvt > end) continue;
-            
-            // Si on a un pool jeunes, vérifier que cet event concerne un jeune du pool
-            var evtJeuneId = dE[j][1];
-            if (jeuneIdsPool && !jeuneIdsPool.has(evtJeuneId)) continue;
-            
-            totalEventsChecked++;
-            
-            var matchAllEvt = true;
-            for (var ei = 0; ei < condEvents.length; ei++) {
-              var ce = condEvents[ei];
-              var eColIdx = eventsFields[ce.field];
-              if (eColIdx === undefined) { matchAllEvt = false; break; }
-              var eV = String(dE[j][eColIdx] || "").toLowerCase();
-              var eqV = String(ce.value || "").toLowerCase();
-              
-              if (!matchCondition(eV, ce.operator, eqV)) {
-                matchAllEvt = false;
-                break;
-              }
-            }
-            if (matchAllEvt) {
-              matchedJeunes.add(evtJeuneId);
-              matchedEvents++;
-            }
+          var allEventMatch = true;
+          for (var ci2 = 0; ci2 < eventConditions.length; ci2++) {
+            var cond2 = eventConditions[ci2];
+            var colIdx2 = eventsFields[cond2.field];
+            if (colIdx2 === undefined) { allEventMatch = false; break; }
+            var cellVal2 = String(dE[ei][colIdx2] || '').toLowerCase();
+            var condVal2 = String(cond2.value || '').toLowerCase();
+            if (cond2.operator === 'equals' && cellVal2 !== condVal2) { allEventMatch = false; break; }
+            if (cond2.operator === 'contains' && !cellVal2.includes(condVal2)) { allEventMatch = false; break; }
+            if (cond2.operator === 'not_equals' && cellVal2 === condVal2) { allEventMatch = false; break; }
           }
-          
-          // Le mode résultat : nombre de jeunes uniques matchant
-          var useJeuneCount = widget.resultMode !== 'events';
-          var finalCount = useJeuneCount ? matchedJeunes.size : matchedEvents;
-          var finalTotal = useJeuneCount ? (jeuneIdsPool ? jeuneIdsPool.size : matchedJeunes.size) : totalEventsChecked;
-          var finalPct = finalTotal > 0 ? Math.round((finalCount / finalTotal) * 100) : 0;
-          
-          results[widget.id] = { 
-            value: finalCount, 
-            total: finalTotal, 
-            percentage: finalPct,
-            jeunesCount: matchedJeunes.size,
-            eventsCount: matchedEvents
-          };
+          if (allEventMatch && eventConditions.length > 0) {
+            matchedEvents++;
+            matchedBenef.add(dE[ei][1]);
+          }
         }
+        
+        var value = resultMode === 'events' ? matchedEvents : matchedBenef.size;
+        var total = resultMode === 'events' ? stats.total_events : stats.total_actifs;
+        var pct = total > 0 ? Math.round((value / total) * 100) : 0;
+        
+        results[widget.id] = { value: value, percentage: pct, jeunesCount: matchedBenef.size, eventsCount: matchedEvents };
       }
     } catch(e) {
-      results[widget.id] = { value: 0, error: e.toString() };
+      results[widget.id] = { value: 'ERR', error: e.toString() };
     }
   });
   
-  results['_fullStats'] = stats;
+  results._fullStats = stats;
   return results;
 }
 
-// Fonction utilitaire pour évaluer une condition
-function matchCondition(cellValue, operator, queryValue) {
-  switch(operator) {
-    case 'equals': return cellValue === queryValue;
-    case 'contains': return cellValue.includes(queryValue);
-    case 'not_contains': return !cellValue.includes(queryValue);
-    case 'not_empty': return cellValue !== "";
-    case 'empty': return cellValue === "";
-    case 'less_than': return parseInt(cellValue) < parseInt(queryValue);
-    case 'greater_than': return parseInt(cellValue) > parseInt(queryValue);
-    default: return false;
-  }
-}
+// ============================================================================
+//          DASHBOARD RAPPELS SUMMARY
+// ============================================================================
 
-// Récupère les données d'un jeune épinglé (carte résumée pour dashboard)
-function getDashboardJeuneCard(idJeune) {
-  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_JEUNES');
-  const data = ws.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] == idJeune) {
-      return {
-        success: true,
-        jeune: {
-          id: data[i][0],
-          nom: data[i][3],
-          surnom: data[i][4],
-          age: data[i][5],
-          tel: data[i][2],
-          nationalite: data[i][7],
-          lieu_vie: data[i][14],
-          statut_presence: data[i][9],
-          statut_mab: data[i][10],
-          vulnerabilites: data[i][15] || "",
-          date_contact: formatDate(data[i][11])
-        }
-      };
-    }
-  }
-  return { success: false, message: "Jeune introuvable" };
-}
-
-// Récupère un résumé des rappels pour le widget dashboard
 function getDashboardRappelsSummary() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
-  const wsRappels = ss.getSheetByName('BDD_RAPPELS');
-  const wsJeunes = ss.getSheetByName('BDD_JEUNES');
+  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_RAPPELS');
+  const wsBenef = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_BENEFICIAIRES');
+  const data = ws.getDataRange().getValues();
+  const dataBenef = wsBenef.getDataRange().getValues();
+  const today = new Date(); today.setHours(0,0,0,0);
   
-  const dataRappels = wsRappels.getDataRange().getValues();
-  const dataJeunes = wsJeunes.getDataRange().getValues();
-  
-  let jeunesMap = {};
-  for(let i=1; i<dataJeunes.length; i++) {
-    jeunesMap[dataJeunes[i][0]] = { nom: dataJeunes[i][3] };
+  let benefMap = {};
+  for(let i=1; i<dataBenef.length; i++) {
+    benefMap[dataBenef[i][0]] = dataBenef[i][1] + ' ' + (dataBenef[i][2] || '');
   }
   
-  const today = new Date(); 
-  today.setHours(0,0,0,0);
-  let enRetard = 0;
-  let aFaire = 0;
-  let prochains = []; // Les 5 prochains rappels
-
-  for (let i = 1; i < dataRappels.length; i++) {
+  let enRetard = 0, aFaire = 0;
+  let prochains = [];
+  
+  for (let i = 1; i < data.length; i++) {
     try {
-      let statut = String(dataRappels[i][5] || "").toLowerCase().trim();
-      if (statut.indexOf("faire") !== -1) {
-        let echeance = parseDateSecure(dataRappels[i][4]);
-        let idJeune = dataRappels[i][0];
-        let jInfo = jeunesMap[idJeune] || { nom: "Inconnu" };
-        
-        if (echeance < today) {
-          enRetard++;
-        } else {
-          aFaire++;
-        }
-        
-        if (prochains.length < 8) {
-          prochains.push({
-            idRappel: dataRappels[i][1],
-            idJeune: idJeune,
-            nomJeune: jInfo.nom,
-            titre: String(dataRappels[i][6] || "Sans titre"),
-            date: formatDate(echeance),
-            isLate: echeance < today
-          });
-        }
+      let statut = String(data[i][5] || '').toLowerCase().trim();
+      if (statut.indexOf('faire') !== -1) {
+        aFaire++;
+        let echeance = parseDateSecure(data[i][3] || data[i][4]);
+        if (echeance < today) enRetard++;
+        let nom = benefMap[data[i][0]] || 'Inconnu';
+        prochains.push({
+          idBenef: data[i][0],
+          nom: nom,
+          titre: String(data[i][6] || "Sans titre"),
+          date: formatDate(echeance),
+          isLate: echeance < today
+        });
       }
     } catch(e) {}
   }
   
-  // Trier: en retard d'abord
   prochains.sort(function(a,b) {
     if (a.isLate && !b.isLate) return -1;
     if (!a.isLate && b.isLate) return 1;
@@ -1913,7 +1696,69 @@ function getDashboardRappelsSummary() {
 }
 
 // ============================================================================
-// PHASE 4 FIX : Stockage préférences PAR UTILISATEUR TAMABochi (spreadsheet)
+//  Phase 7 : EXPORT CSV DES RECHERCHES ET STATISTIQUES
+// ============================================================================
+
+function exportSearchResultsCSV(query, filters) {
+  var results = searchBenefAdvanced(query, filters);
+  if (!results || results.length === 0) return { success: false, message: "Aucun résultat à exporter." };
+  
+  var headers = ['ID', 'Prénom', 'Nom', 'Surnom', 'Genre', 'Nationalité', 'Type_Profil', 'Statut_Presence', 'Statut_Institution', 'Lieu_Vie', 'Vulnérabilités', 'ID_Foyer'];
+  var csv = headers.join(';') + '\n';
+  
+  results.forEach(function(r) {
+    var line = [
+      r.id || '',
+      (r.nom || '').split(' ')[0] || '',
+      (r.nom || '').split(' ').slice(1).join(' ') || '',
+      r.surnom || '',
+      r.genre || '',
+      r.nationalite || '',
+      r.typeProfil || '',
+      r.statut_presence || '',
+      r.statut_institution || '',
+      r.lieu || '',
+      (r.vulns || '').replace(/;/g, ','),
+      ''
+    ].map(function(v) { return '"' + String(v).replace(/"/g, '""') + '"'; });
+    csv += line.join(';') + '\n';
+  });
+  
+  return { success: true, csv: csv, count: results.length, filename: 'export_recherche_' + new Date().toISOString().substring(0, 10) + '.csv' };
+}
+
+function exportStatisticsCSV(startStr, endStr) {
+  var stats = getStatisticsDetailed(startStr, endStr);
+  var csv = "Catégorie;Item;Valeur\n";
+  
+  csv += '"Résumé";"Présents";"' + stats.presents + '"\n';
+  csv += '"Résumé";"Nouveaux";"' + stats.nouveaux + '"\n';
+  csv += '"Résumé";"Total événements";"' + stats.total_events + '"\n';
+  csv += '"Résumé";"Total foyers";"' + stats.total_foyers + '"\n';
+  
+  var categories = {
+    'Nationalités': stats.nationalites, 'Langues': stats.langues,
+    'Statut Présence': stats.statut_presence, 'Statut Institution': stats.statut_institution,
+    'Lieux de Vie': stats.lieux_vie, 'Vulnérabilités': stats.vulnerabilites_tags,
+    'Types Événements': stats.types_evenements, 'Types Contact': stats.types_contact,
+    'Types Profils': stats.types_profils, 'Genres': stats.genres
+  };
+  
+  for (var cat in categories) {
+    var data = categories[cat];
+    if (!data) continue;
+    for (var item in data) {
+      if (data.hasOwnProperty(item)) {
+        csv += '"' + cat + '";"' + String(item).replace(/"/g, '""') + '";"' + data[item] + '"\n';
+      }
+    }
+  }
+  
+  return { success: true, csv: csv, filename: 'export_stats_' + startStr + '_' + endStr + '.csv' };
+}
+
+// ============================================================================
+//  STOCKAGE PRÉFÉRENCES UTILISATEUR (spreadsheet)
 // ============================================================================
 
 function saveUserPref(userEmail, cle, valeur) {
