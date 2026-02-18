@@ -36,7 +36,7 @@ function loginUser(email, password) {
       };
     }
   }
-  return { success: false, message: "Email ou mot de passe incorrect." };
+  return { success: false, message: "ID ou mot de passe incorrect." };
 }
 
 // ============================================================================
@@ -135,7 +135,6 @@ function getJeuneStatus(id) {
 //                          GESTION DES RAPPELS
 // ============================================================================
 
-// NOUVEAU : getRappelsAll retourne 3 catégories : enRetard, aFaire, archives
 function getRappelsAll() {
   const ss = SpreadsheetApp.openById(SHEET_ID);
   const wsRappels = ss.getSheetByName('BDD_RAPPELS');
@@ -180,7 +179,6 @@ function getRappelsAll() {
       };
 
       if (statutLower.indexOf("faire") !== -1) {
-        // C'est un rappel "À faire"
         if (echeance < today) {
           item.isLate = true;
           enRetard.push(item);
@@ -188,13 +186,11 @@ function getRappelsAll() {
           aFaire.push(item);
         }
       } else {
-        // Archivé (Fait, Abandonné, ou tout autre statut terminé)
         archives.push(item);
       }
     } catch (e) { console.log("Erreur ligne rappel " + i + ": " + e.toString()); }
   }
   
-  // Tri : en retard par date croissante, à faire par date croissante, archives par date décroissante
   enRetard.sort(function(a,b) { return new Date(a.dateRaw) - new Date(b.dateRaw); });
   aFaire.sort(function(a,b) { return new Date(a.dateRaw) - new Date(b.dateRaw); });
   archives.sort(function(a,b) { return new Date(b.dateRaw) - new Date(a.dateRaw); });
@@ -202,7 +198,6 @@ function getRappelsAll() {
   return { enRetard: enRetard, aFaire: aFaire, archives: archives };
 }
 
-// CONSERVEE pour compatibilité (dashboard, etc.)
 function getRappels() {
   const ss = SpreadsheetApp.openById(SHEET_ID);
   const wsRappels = ss.getSheetByName('BDD_RAPPELS');
@@ -318,17 +313,14 @@ function createAutomaticReminders(idJeune, vulnsArray, eventType, details) {
     }
   });
 
-  // BDD_RAPPELS : A=ID_Jeune, B=ID_Rappel, C=Infos_Jeune, D=Details, E=Echeance, F=Statut, G=Titre, H=DateCreation, I=TypeRappel
   rappelsToAdd.forEach(r => { 
     wsRappels.appendRow([idJeune, Utilities.getUuid(), "", r.details, r.date, "A faire", r.titre, now, "Automatique"]); 
   });
 }
 
-// M7 : saveManualReminder accepte maintenant un typeRappel
 function saveManualReminder(form) {
   const wsRappels = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_RAPPELS');
   const now = new Date();
-  // BDD_RAPPELS : A=ID_Jeune, B=ID_Rappel, C=Infos_Jeune, D=Details, E=Echeance, F=Statut, G=Titre, H=DateCreation, I=TypeRappel
   wsRappels.appendRow([form.idJeune, Utilities.getUuid(), "", form.details, new Date(form.date), "A faire", form.titre, now, form.typeRappel || ""]);
   return { success: true, message: "Rappel ajouté." };
 }
@@ -387,7 +379,6 @@ function addCommentToRappel(idRappel, comment) {
   }
   return { success: false, message: "Rappel introuvable." };
 }
-
 // ============================================================================
 //                          ENREGISTREMENT & DOUBLONS
 // ============================================================================
@@ -418,13 +409,11 @@ function saveJeuneSmart(form, auteurEmail, modeForce) {
   
   let finalIdGroupe = Utilities.getUuid();
   let historiqueMsg = "Création fiche";
-  // C8 : Historique Groupe
   let historiqueGroupeMsg = "";
 
   if (form.forceGroupId) { 
     finalIdGroupe = form.forceGroupId; 
     historiqueMsg = "Ajout au groupe (Enregistrement groupé)"; 
-    // C8 : Tracer l'ajout au groupe
     historiqueGroupeMsg = "Ajouté au groupe (enreg. groupé) le " + formatDate(now);
   } 
   else if (!modeForce) {
@@ -442,7 +431,6 @@ function saveJeuneSmart(form, auteurEmail, modeForce) {
         } else { 
           groupFound = Utilities.getUuid(); 
           wsJeunes.getRange(i + 1, 2).setValue(groupFound); 
-          // C8 : Mettre à jour l'historique groupe du jeune existant aussi
           let existingHist = String(data[i][17] || "");
           let newHist = existingHist ? existingHist + " | Groupe créé le " + formatDate(now) : "Groupe créé le " + formatDate(now);
           wsJeunes.getRange(i + 1, 18).setValue(newHist);
@@ -452,7 +440,6 @@ function saveJeuneSmart(form, auteurEmail, modeForce) {
     }
     if (groupFound) finalIdGroupe = groupFound;
     historiqueMsg = "Ajout au groupe existant";
-    // C8 : Tracer l'ajout au groupe
     historiqueGroupeMsg = "Rejoint groupe existant le " + formatDate(now);
   }
   else if (modeForce === 'NEW_OWNER') {
@@ -472,22 +459,16 @@ function saveJeuneSmart(form, auteurEmail, modeForce) {
   const dateRencontre = form.dateRencontre ? new Date(form.dateRencontre) : now;
   const vulnString = form.vulnerabilites ? form.vulnerabilites.join(", ") : "";
   
-  let initStatutPres = "Présent"; let initStatutMab = "En attente";
+  let initStatutPres = "Présent pas équipé"; let initStatutMab = "Non demandée";
   const eventType = form.eventType || "Rencontre";
   if (eventType.includes("Départ UK") || eventType.includes("Parti")) initStatutPres = "Parti";
   else if (eventType.includes("Demande MAB")) initStatutMab = "Demandée";
   else if (eventType.includes("MAB") && eventType.includes("Foyer")) { initStatutMab = "Validée"; initStatutPres = "MAB (Foyer)"; }
 
   let labelsStr = Array.isArray(form.labelsAutres) ? form.labelsAutres.join(", ") : (form.labelsAutres || "");
-  
-  // M6 : Langues peut être multi-select, stocker en chaîne séparée par virgules
   let langueStr = Array.isArray(form.langue) ? form.langue.join(", ") : (form.langue || "");
-  // M6 : TypeContact peut être multi-select
   let contactTypeStr = Array.isArray(form.typeContact) ? form.typeContact.join(", ") : (form.typeContact || "Non connu");
 
-  // Colonnes BDD_JEUNES : A=ID, B=IDGroupe, C=Tel, D=Nom, E=Surnom, F=Age, G=Genre, H=Nationalite, I=Langue, 
-  // J=StatutPresence, K=StatutMab, L=DateDernierContact, M=DateDerniereRencontre, N=DateDerniereDistrib, 
-  // O=LieuVie, P=VulnTags, Q=HistoriqueJeune, R=HistoriqueGroupe, S=DateCreation, T=NotesFixes, U=LabelsAutres
   wsJeunes.appendRow([
     idJeune,              // A - ID_Jeune
     finalIdGroupe,        // B - ID_Groupe
@@ -497,7 +478,7 @@ function saveJeuneSmart(form, auteurEmail, modeForce) {
     form.age,             // F - Age
     form.genre,           // G - Genre
     form.nationalite,     // H - Nationalite
-    langueStr,            // I - Langue (M6: peut être multi)
+    langueStr,            // I - Langue
     initStatutPres,       // J - Statut_Presence
     initStatutMab,        // K - Statut_Mab
     dateRencontre,        // L - Date_Dernier_Contact
@@ -506,7 +487,7 @@ function saveJeuneSmart(form, auteurEmail, modeForce) {
     form.lieuVie,         // O - Lieu_Vie
     vulnString,           // P - Vulnerabilite_Tags
     historiqueMsg,        // Q - Historique_Jeune
-    historiqueGroupeMsg,  // R - Historique_Groupe (C8)
+    historiqueGroupeMsg,  // R - Historique_Groupe
     now,                  // S - Date_Creation
     form.notesFixes || "",// T - Notes_Fixes
     labelsStr             // U - Labels_Autres
@@ -551,7 +532,12 @@ function updateJeuneProfile(form, auteurEmail) {
   let changes = [];
   if (form.nom && form.nom !== current.nom) { wsModifs.appendRow([form.id, "Modification Nom", current.nom, form.nom, now, auteurEmail]); wsJeunes.getRange(rowIndex, 4).setValue(form.nom); changes.push("Nom"); }
   if (form.surnom !== current.surnom) { wsModifs.appendRow([form.id, "Modification Surnom", current.surnom, form.surnom, now, auteurEmail]); wsJeunes.getRange(rowIndex, 5).setValue(form.surnom); changes.push("Surnom"); }
-  if (normalizeTel(form.tel) !== normalizeTel(current.tel)) { wsModifs.appendRow([form.id, "Modification Tel", current.tel, "'" + form.tel, now, auteurEmail]); wsJeunes.getRange(rowIndex, 3).setValue("'" + form.tel); changes.push("Téléphone"); }
+  if (normalizeTel(form.tel) !== normalizeTel(current.tel)) { 
+    var telForSheet = "'" + String(form.tel).replace(/^'+/, '');
+    wsModifs.appendRow([form.id, "Modification Tel", current.tel, telForSheet, now, auteurEmail]); 
+    wsJeunes.getRange(rowIndex, 3).setNumberFormat('@').setValue(String(form.tel).replace(/^'+/, '')); 
+    changes.push("Téléphone"); 
+  }
   if (form.age != current.age) { wsModifs.appendRow([form.id, "Modification Age", current.age, form.age, now, auteurEmail]); wsJeunes.getRange(rowIndex, 6).setValue(form.age); changes.push("Age"); }
   if (form.lieu && form.lieu !== current.lieu) { wsModifs.appendRow([form.id, "Modification Lieu", current.lieu, form.lieu, now, auteurEmail]); wsJeunes.getRange(rowIndex, 15).setValue(form.lieu); changes.push("Lieu"); }
   
@@ -579,6 +565,17 @@ function updateJeuneProfile(form, auteurEmail) {
     changes.push("Labels Autres");
   }
 
+  // Modification des vulnérabilités
+  if (form.vulnerabilites !== undefined) {
+    let newVulnStr = Array.isArray(form.vulnerabilites) ? form.vulnerabilites.join(", ") : (form.vulnerabilites || "");
+    let currentVulns = String(data[rowIndex - 1][15] || "");
+    if (newVulnStr !== currentVulns) {
+      wsModifs.appendRow([form.id, "Modification Vulnérabilités", currentVulns, newVulnStr, now, auteurEmail]);
+      wsJeunes.getRange(rowIndex, 16).setValue(newVulnStr);
+      changes.push("Vulnérabilités");
+    }
+  }
+
   if (changes.length === 0) return { success: false, message: "Aucune modification détectée." };
   return { success: true, message: "Modifications enregistrées : " + changes.join(", ") };
 }
@@ -603,12 +600,9 @@ function saveNewEvent(form, auteurEmail) {
   }
   if (rowIndex === -1) return { success: false, message: "Jeune introuvable." };
   
-  // C10 : Mettre à jour Date_Dernier_Contact (col L) pour TOUS les types d'événements
   wsJeunes.getRange(rowIndex, 12).setValue(dateEvent);
-  // C10 : Mettre à jour Date_Derniere_Rencontre (col M) pour TOUS les types d'événements
   wsJeunes.getRange(rowIndex, 13).setValue(dateEvent);
   
-  // B1 : Mettre à jour Date_Derniere_Distrib (col N) si événement de type Distrib
   let eventTypeLower = String(form.type).toLowerCase();
   if (eventTypeLower.includes("distrib")) {
     wsJeunes.getRange(rowIndex, 14).setValue(dateEvent);
@@ -650,9 +644,7 @@ function saveNewEvent(form, auteurEmail) {
   
   let fullDetails = form.note || ""; 
   let materielStr = Array.isArray(form.materiel) ? form.materiel.join(", ") : (form.materiel || "");
-  // M6 : TypeContact peut être multi-select
   let contactStr = Array.isArray(form.typeContact) ? form.typeContact.join(", ") : (form.typeContact || "Physique");
-  // M1 : motifStatutMab (anciennement motifRefus)
   let motifStr = Array.isArray(form.motifStatutMab) ? form.motifStatutMab.join(", ") : (form.motifStatutMab || "");
   
   wsEvents.appendRow([idEvent, form.idJeune, dateEvent, form.type, contactStr, form.lieuEvent || "", fullDetails, finalStatutPres, finalStatutMab, motifStr, newVulnString, materielStr, finalLieuVie, auteurEmail]);
@@ -666,10 +658,17 @@ function getEventData(idEvent) {
   const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_EVENTS');
   const data = ws.getDataRange().getValues();
   for (let i=1; i<data.length; i++) {
-    if (data[i][0] === idEvent) {
+    if (String(data[i][0]) === String(idEvent)) {
+      var rawDate = data[i][2];
+      var dateRawStr = "";
+      try {
+        dateRawStr = (rawDate instanceof Date) ? rawDate.toISOString() : String(rawDate || "");
+      } catch(e) {
+        dateRawStr = "";
+      }
       return { 
         id: data[i][0], 
-        dateRaw: data[i][2],
+        dateRaw: dateRawStr,
         type: data[i][3], 
         contact: data[i][4], 
         lieu: data[i][5], 
@@ -687,14 +686,11 @@ function saveEditedEvent(form, auteurEmail) {
   const data = wsEvents.getDataRange().getValues();
   
   for (let i=1; i<data.length; i++) {
-    if (data[i][0] === form.idEvent) {
-      // Log modification
+    if (String(data[i][0]) === String(form.idEvent)) {
       wsModifs.appendRow([data[i][1], "Modif Event (" + data[i][3] + ")", "", "Modifié par user", new Date(), auteurEmail]);
-      
-      wsEvents.getRange(i+1, 3).setValue(new Date(form.date)); // Date
-      wsEvents.getRange(i+1, 4).setValue(form.type); // Type
-      wsEvents.getRange(i+1, 7).setValue(form.details); // Note
-      
+      wsEvents.getRange(i+1, 3).setValue(new Date(form.date));
+      wsEvents.getRange(i+1, 4).setValue(form.type);
+      wsEvents.getRange(i+1, 7).setValue(form.details);
       return { success: true, message: "Événement mis à jour" };
     }
   }
@@ -708,7 +704,7 @@ function saveMassEvent(form, auteurEmail) {
     let singleForm = { 
       idJeune: id, type: form.type, date: form.date, lieuVie: form.lieuVie, lieuEvent: form.lieuEvent, 
       statutMab: form.statutMab, statutPres: form.statutPres, 
-      motifStatutMab: form.motifStatutMab,  // M1
+      motifStatutMab: form.motifStatutMab,
       materiel: form.materiel, typeContact: form.typeContact, vulns: form.vulns, note: form.note 
     };
     try { saveNewEvent(singleForm, auteurEmail); successCount++; } catch(e) { console.error(e); }
@@ -729,7 +725,6 @@ function getJeunesByLieuVie(lieuVie) {
     let statutPres = String(data[i][9] || "").toLowerCase();
     let lieu = String(data[i][14] || "");
     
-    // Ne sélectionner que les jeunes actifs/présents sur ce lieu
     if (lieu === lieuVie && (statutPres.includes("présent") || statutPres.includes("mab (foyer)") || statutPres.includes("hospitalisé"))) {
       results.push({
         id: data[i][0],
@@ -766,13 +761,11 @@ function searchJeunesAdvanced(query, filters) {
   let q = query ? String(query).toLowerCase().trim() : "";
   let qClean = normalizeTel(q);
   
-  // Extraction des filtres
   let filterPresence = (filters && filters.statutPresence) ? filters.statutPresence : "";
   let filterMab = (filters && filters.statutMab) ? filters.statutMab : "";
   let filterVuln = (filters && filters.vulnerabilite) ? filters.vulnerabilite.toLowerCase() : "";
   let filterLieu = (filters && filters.lieuVie) ? filters.lieuVie : "";
   let showAllActifs = (filters && filters.showAllActifs) ? true : false;
-  // M5 : Mode afficher TOUS les jeunes sans filtre de présence
   let showAll = (filters && filters.showAll) ? true : false;
   
   for (let i = 1; i < dataJeunes.length; i++) {
@@ -786,22 +779,19 @@ function searchJeunesAdvanced(query, filters) {
     let vulns = String(dataJeunes[i][15] || "").toLowerCase();
     let lieuVie = String(dataJeunes[i][14] || "");
     
-    // Filtre texte (recherche classique)
     let matchText = false;
     if (q === "" && (showAll || showAllActifs || filterPresence || filterMab || filterVuln || filterLieu)) {
-      // Pas de texte tapé mais des filtres actifs ou mode "tous"
       matchText = true;
     } else if (q !== "") {
       matchText = nom.includes(q) || surnom.includes(q) || lieu.includes(q);
       let matchTel = (qClean.length > 3) && telClean.includes(qClean);
       matchText = matchText || matchTel;
     } else {
-      continue; // Ni texte ni filtre, on skip
+      continue;
     }
     
     if (!matchText) continue;
     
-    // C12 : Mode "tous les actifs"
     if (showAllActifs) {
       let presLower = statutPres.toLowerCase();
       if (!(presLower.includes("présent") || presLower.includes("mab (foyer)") || presLower.includes("hospitalisé"))) {
@@ -809,10 +799,6 @@ function searchJeunesAdvanced(query, filters) {
       }
     }
     
-    // M5 : Mode "tous les jeunes" — pas de filtre de présence appliqué
-    // (showAll ne filtre rien, on passe tout)
-    
-    // C11 : Filtres avancés
     if (filterPresence && statutPres !== filterPresence) continue;
     if (filterMab && statutMab !== filterMab) continue;
     if (filterVuln && !vulns.includes(filterVuln.toLowerCase())) continue;
@@ -838,7 +824,6 @@ function searchJeunesAdvanced(query, filters) {
     if (results.length >= 200) break; 
   }
 
-  // Recherche dans historique des anciens numéros (seulement si recherche texte)
   if (q !== "" && qClean.length > 3) {
     for (let j = 1; j < dataModifs.length; j++) {
       let oldVal = normalizeTel(dataModifs[j][2]); 
@@ -860,13 +845,12 @@ function searchJeunesAdvanced(query, filters) {
   return results;
 }
 
-// On conserve l'ancienne fonction pour compatibilité
 function searchJeunes(query) {
   return searchJeunesAdvanced(query, null);
 }
 
 // ============================================================================
-//              U4 : DONNEES RAPPELS PAR JEUNE (pour indicateurs visuels)
+//              U4 : DONNEES RAPPELS PAR JEUNE
 // ============================================================================
 
 function getRappelsEnRetardParJeune() {
@@ -896,18 +880,18 @@ function getRappelsEnRetardParJeune() {
 function getFicheJeune(idJeune) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
   const dataJeunes = ss.getSheetByName('BDD_JEUNES').getDataRange().getValues();
-  let infoJeune = null;
+  var infoJeune = null;
   
-  let groupCounts = {};
-  for(let i=1; i<dataJeunes.length; i++) {
-    let gid = dataJeunes[i][1];
-    if(gid) groupCounts[gid] = (groupCounts[gid] || 0) + 1;
+  var groupCounts = {};
+  for (var i = 1; i < dataJeunes.length; i++) {
+    var gid = dataJeunes[i][1];
+    if (gid) groupCounts[gid] = (groupCounts[gid] || 0) + 1;
   }
 
-  for (let i = 1; i < dataJeunes.length; i++) {
+  for (var i = 1; i < dataJeunes.length; i++) {
     if (dataJeunes[i][0] == idJeune) {
-      let gid = dataJeunes[i][1];
-      let hasGroup = (gid && groupCounts[gid] > 1);
+      var gid = dataJeunes[i][1];
+      var hasGroup = (gid && groupCounts[gid] > 1);
       
       infoJeune = {
         id: dataJeunes[i][0], id_groupe: gid, tel: dataJeunes[i][2], nom: dataJeunes[i][3],
@@ -915,7 +899,6 @@ function getFicheJeune(idJeune) {
         langue: dataJeunes[i][8], statut_presence: dataJeunes[i][9], statut_mab: dataJeunes[i][10],
         date_contact: formatDate(dataJeunes[i][11]), 
         date_rencontre: formatDate(dataJeunes[i][12]),
-        // C9 : Date dernière distribution
         date_distrib: formatDate(dataJeunes[i][13]),
         lieu_vie: dataJeunes[i][14], vulnerabilites: dataJeunes[i][15],
         has_group: hasGroup,
@@ -928,20 +911,76 @@ function getFicheJeune(idJeune) {
   }
   if (!infoJeune) return { success: false, message: "Jeune introuvable" };
 
-  const dataEvents = ss.getSheetByName('BDD_EVENTS').getDataRange().getValues();
-  let history = [];
-  for (let j = 1; j < dataEvents.length; j++) {
+  var dataEvents = ss.getSheetByName('BDD_EVENTS').getDataRange().getValues();
+  var history = [];
+  for (var j = 1; j < dataEvents.length; j++) {
     if (dataEvents[j][1] == idJeune) {
-      history.push({ idEvent: dataEvents[j][0], date: formatDate(dataEvents[j][2]), type: dataEvents[j][3], lieu: dataEvents[j][5], details: dataEvents[j][6], statut_mab_event: dataEvents[j][8], auteur: dataEvents[j][13] });
+      // Convertir dateRaw en string ISO pour éviter problème de sérialisation
+      var rawEvtDate = dataEvents[j][2];
+      var dateRawStr = "";
+      try {
+        dateRawStr = (rawEvtDate instanceof Date) ? rawEvtDate.toISOString() : String(rawEvtDate || "");
+      } catch(e) {
+        dateRawStr = "";
+      }
+      history.push({
+        idEvent: dataEvents[j][0],
+        date: formatDate(dataEvents[j][2]),
+        dateRaw: dateRawStr,
+        type: dataEvents[j][3],
+        lieu: dataEvents[j][5],
+        details: dataEvents[j][6],
+        statut_mab_event: dataEvents[j][8],
+        auteur: dataEvents[j][13]
+      });
     }
   }
-  const dataModifs = ss.getSheetByName('BDD_MODIFS').getDataRange().getValues();
-  for (let m = 1; m < dataModifs.length; m++) {
+
+  var dataModifs = ss.getSheetByName('BDD_MODIFS').getDataRange().getValues();
+  for (var m = 1; m < dataModifs.length; m++) {
     if (dataModifs[m][0] == idJeune) {
-       history.push({ date: formatDate(dataModifs[m][4]), type: "Modification", lieu: "-", details: dataModifs[m][1] + " : " + dataModifs[m][2] + " -> " + dataModifs[m][3], auteur: dataModifs[m][5] });
+      // Convertir dateRaw en string ISO pour éviter problème de sérialisation
+      var rawModDate = dataModifs[m][4];
+      var dateRawModStr = "";
+      try {
+        dateRawModStr = (rawModDate instanceof Date) ? rawModDate.toISOString() : String(rawModDate || "");
+      } catch(e) {
+        dateRawModStr = "";
+      }
+      history.push({
+        date: formatDate(dataModifs[m][4]),
+        dateRaw: dateRawModStr,
+        type: "Modification",
+        lieu: "-",
+        details: dataModifs[m][1] + " : " + dataModifs[m][2] + " -> " + dataModifs[m][3],
+        auteur: dataModifs[m][5]
+      });
     }
   }
-  history.reverse(); 
+
+  // Trier par date d'événement décroissante (plus récent en haut)
+  history.sort(function(a, b) {
+    try {
+      var dateA = a.dateRaw ? new Date(a.dateRaw) : new Date(0);
+      var dateB = b.dateRaw ? new Date(b.dateRaw) : new Date(0);
+      if (isNaN(dateA.getTime())) dateA = new Date(0);
+      if (isNaN(dateB.getTime())) dateB = new Date(0);
+      return dateB.getTime() - dateA.getTime();
+    } catch(e) {
+      return 0;
+    }
+  });
+
+  // Récupérer le dernier motif statut MAB depuis les events
+  var lastMotifMab = "";
+  for (var ev = dataEvents.length - 1; ev >= 1; ev--) {
+    if (dataEvents[ev][1] == idJeune) {
+      var motif = String(dataEvents[ev][9] || "").trim();
+      if (motif) { lastMotifMab = motif; break; }
+    }
+  }
+  infoJeune.motif_statut_mab = lastMotifMab;
+
   return { success: true, jeune: infoJeune, history: history };
 }
 
@@ -964,10 +1003,9 @@ function getGroupMembers(groupId, excludeId) {
 }
 
 // ============================================================================
-//    NOUVEAU : LIAISON GROUPE PAR ID_GROUPE (sans partage de numéro)
+//    LIAISON GROUPE PAR ID_GROUPE (sans partage de numéro)
 // ============================================================================
 
-// Recherche de jeunes pour la liaison groupe (par nom, surnom, tel)
 function searchJeunesForGroupLink(query) {
   const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_JEUNES');
   const data = ws.getDataRange().getValues();
@@ -1000,10 +1038,6 @@ function searchJeunesForGroupLink(query) {
   return results;
 }
 
-// Lier un ensemble de jeunes à un groupe commun
-// targetJeuneIds : tableau d'IDs de jeunes à lier au groupe du sourceJeuneId
-// Si sourceJeuneId a déjà un groupe, on y ajoute les targets
-// Sinon on crée un nouveau groupe pour tout le monde
 function linkJeunesToGroup(sourceJeuneId, targetJeuneIds) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
   const wsJeunes = ss.getSheetByName('BDD_JEUNES');
@@ -1014,7 +1048,6 @@ function linkJeunesToGroup(sourceJeuneId, targetJeuneIds) {
     return { success: false, message: "Aucun jeune cible sélectionné." };
   }
   
-  // 1. Trouver le groupe du source (ou en créer un)
   let groupId = null;
   let sourceRowIndex = -1;
   for (let i = 1; i < data.length; i++) {
@@ -1029,24 +1062,20 @@ function linkJeunesToGroup(sourceJeuneId, targetJeuneIds) {
     return { success: false, message: "Jeune source introuvable." };
   }
   
-  // Si pas de groupe existant, en créer un
   if (!groupId) {
     groupId = Utilities.getUuid();
     wsJeunes.getRange(sourceRowIndex, 2).setValue(groupId);
-    // Mettre à jour l'historique groupe du source
     let existingHist = String(data[sourceRowIndex - 1][17] || "");
     let newHist = existingHist ? existingHist + " | Groupe créé le " + formatDate(now) : "Groupe créé le " + formatDate(now);
     wsJeunes.getRange(sourceRowIndex, 18).setValue(newHist);
   }
   
-  // 2. Mettre à jour tous les jeunes cibles
   let linkedCount = 0;
   for (let i = 1; i < data.length; i++) {
     if (targetJeuneIds.includes(data[i][0])) {
       let currentGroupId = data[i][1];
       if (currentGroupId !== groupId) {
         wsJeunes.getRange(i + 1, 2).setValue(groupId);
-        // Mettre à jour l'historique groupe
         let existingHist = String(data[i][17] || "");
         let newHist = existingHist ? existingHist + " | Rejoint groupe le " + formatDate(now) : "Rejoint groupe le " + formatDate(now);
         wsJeunes.getRange(i + 1, 18).setValue(newHist);
@@ -1058,8 +1087,6 @@ function linkJeunesToGroup(sourceJeuneId, targetJeuneIds) {
   return { success: true, message: linkedCount + " jeune(s) lié(s) au groupe.", groupId: groupId };
 }
 
-// Lier pendant l'enregistrement : on passe les IDs des jeunes existants à lier
-// Le nouveau jeune sera enregistré avec le même groupId
 function getGroupIdForLinking(targetJeuneIds) {
   if (!targetJeuneIds || targetJeuneIds.length === 0) return null;
   
@@ -1068,7 +1095,6 @@ function getGroupIdForLinking(targetJeuneIds) {
   const data = wsJeunes.getDataRange().getValues();
   const now = new Date();
   
-  // Chercher si un des jeunes cibles a déjà un groupId
   let existingGroupId = null;
   for (let i = 1; i < data.length; i++) {
     if (targetJeuneIds.includes(data[i][0]) && data[i][1]) {
@@ -1077,12 +1103,10 @@ function getGroupIdForLinking(targetJeuneIds) {
     }
   }
   
-  // Si aucun n'a de groupe, en créer un
   if (!existingGroupId) {
     existingGroupId = Utilities.getUuid();
   }
   
-  // Mettre à jour tous les jeunes cibles avec ce groupId
   for (let i = 1; i < data.length; i++) {
     if (targetJeuneIds.includes(data[i][0])) {
       if (data[i][1] !== existingGroupId) {
@@ -1096,14 +1120,8 @@ function getGroupIdForLinking(targetJeuneIds) {
   
   return existingGroupId;
 }
-
 // ============================================================================
 //          PLAIDOYER & STATS — NOUVELLE VERSION DETAILLEE
-// ============================================================================
-// Nouvelle fonction qui compte chaque item de chaque colonne BDD_CONFIG
-// dans les données jeunes (stock) et events (période).
-// Détecte aussi les items "orphelins" (supprimés de BDD_CONFIG mais encore
-// présents dans les données).
 // ============================================================================
 
 function getStatisticsDetailed(startStr, endStr) {
@@ -1113,7 +1131,6 @@ function getStatisticsDetailed(startStr, endStr) {
     const wsEvents = ss.getSheetByName('BDD_EVENTS');
     const wsConfig = ss.getSheetByName('BDD_CONFIG');
     
-    // Dates
     let start = parseDateSecure(startStr);
     let end = parseDateSecure(endStr);
     end.setHours(23, 59, 59); 
@@ -1121,7 +1138,6 @@ function getStatisticsDetailed(startStr, endStr) {
     const dataJeunes = wsJeunes.getDataRange().getValues();
     const dataEvents = wsEvents.getDataRange().getValues();
 
-    // ---- Charger les listes BDD_CONFIG ----
     const dataConfig = wsConfig.getDataRange().getValues();
     let configLists = {};
     if (dataConfig.length > 0) {
@@ -1139,14 +1155,11 @@ function getStatisticsDetailed(startStr, endStr) {
       }
     }
 
-    // ---- Compteurs de base (sous-cartes Présence) ----
     let presents = 0;
     let mineurs_moins_15 = 0;
     let filles = 0;
     let nouveaux = 0;
 
-    // ---- Compteurs détaillés par colonne BDD_CONFIG ----
-    // Données issues de BDD_JEUNES (stock actuel, toutes fiches)
     let countNationalites = {};
     let countLangues = {};
     let countStatutPresence = {};
@@ -1154,13 +1167,11 @@ function getStatisticsDetailed(startStr, endStr) {
     let countVulnerabilitesTags = {};
     let countLieuxVie = {};
 
-    // Données issues de BDD_EVENTS (sur la période)
     let countTypesEvenements = {};
     let countMotifStatutMab = {};
     let countMateriel = {};
     let countTypesContact = {};
 
-    // ---- Fonctions utilitaires pour incrémenter les compteurs ----
     function incrementMulti(counterObj, rawValue) {
       if (!rawValue) return;
       var str = String(rawValue);
@@ -1180,21 +1191,17 @@ function getStatisticsDetailed(startStr, endStr) {
       }
     }
 
-    // ============================================================
-    // 1. Analyse BDD_JEUNES (toutes les fiches)
-    // ============================================================
     for (let i = 1; i < dataJeunes.length; i++) {
-      let dateCreation = parseDateSecure(dataJeunes[i][18]); // Col S
-      let statutPres = String(dataJeunes[i][9] || "").trim(); // Col J
-      let genre = String(dataJeunes[i][6]).toUpperCase(); // Col G
-      let age = dataJeunes[i][5]; // Col F
-      let nationalite = String(dataJeunes[i][7] || ""); // Col H
-      let langue = String(dataJeunes[i][8] || ""); // Col I
-      let statutMab = String(dataJeunes[i][10] || ""); // Col K
-      let vulns = String(dataJeunes[i][15] || ""); // Col P
-      let lieuVie = String(dataJeunes[i][14] || ""); // Col O
+      let dateCreation = parseDateSecure(dataJeunes[i][18]);
+      let statutPres = String(dataJeunes[i][9] || "").trim();
+      let genre = String(dataJeunes[i][6]).toUpperCase();
+      let age = dataJeunes[i][5];
+      let nationalite = String(dataJeunes[i][7] || "");
+      let langue = String(dataJeunes[i][8] || "");
+      let statutMab = String(dataJeunes[i][10] || "");
+      let vulns = String(dataJeunes[i][15] || "");
+      let lieuVie = String(dataJeunes[i][14] || "");
 
-      // Compteurs par colonne (toutes fiches)
       incrementSingle(countStatutPresence, statutPres);
       incrementSingle(countStatutsMab, statutMab);
       incrementSingle(countNationalites, nationalite);
@@ -1202,38 +1209,31 @@ function getStatisticsDetailed(startStr, endStr) {
       incrementMulti(countVulnerabilitesTags, vulns);
       incrementSingle(countLieuxVie, lieuVie);
 
-      // Sous-carte : Présents (statut contenant "présent")
       let presLower = statutPres.toLowerCase();
       if (presLower.includes("présent")) {
         presents++;
       }
 
-      // Sous-carte : Moins de 15 ans
       if (age && parseInt(age) < 15) {
         mineurs_moins_15++;
       }
 
-      // Sous-carte : Filles
       if (genre === "F" || genre === "FEMININ" || genre === "FILLE") {
         filles++;
       }
 
-      // Sous-carte : Nouveaux dans la période
       if (dateCreation >= start && dateCreation <= end) {
         nouveaux++;
       }
     }
 
-    // ============================================================
-    // 2. Analyse BDD_EVENTS (sur la période sélectionnée)
-    // ============================================================
     for (let j = 1; j < dataEvents.length; j++) {
-      let dateEvt = parseDateSecure(dataEvents[j][2]); // Col C
+      let dateEvt = parseDateSecure(dataEvents[j][2]);
       if (dateEvt >= start && dateEvt <= end) {
-        let typeEvent = String(dataEvents[j][3] || ""); // Col D
-        let typeContact = String(dataEvents[j][4] || ""); // Col E
-        let motif = String(dataEvents[j][9] || ""); // Col J
-        let materiel = String(dataEvents[j][11] || ""); // Col L
+        let typeEvent = String(dataEvents[j][3] || "");
+        let typeContact = String(dataEvents[j][4] || "");
+        let motif = String(dataEvents[j][9] || "");
+        let materiel = String(dataEvents[j][11] || "");
 
         incrementSingle(countTypesEvenements, typeEvent);
         incrementMulti(countTypesContact, typeContact);
@@ -1242,9 +1242,6 @@ function getStatisticsDetailed(startStr, endStr) {
       }
     }
 
-    // ============================================================
-    // 3. Détection des items "orphelins"
-    // ============================================================
     let orphelins = {};
 
     function detectOrphelins(counterObj, configKey) {
@@ -1279,9 +1276,6 @@ function getStatisticsDetailed(startStr, endStr) {
     detectOrphelins(countTypesContact, "TYPES_CONTACT");
     detectOrphelins(countLieuxVie, "LIEUX_VIE");
 
-    // ============================================================
-    // 4. Calculer les totaux
-    // ============================================================
     function sumValues(obj) {
       var total = 0;
       for (var k in obj) {
@@ -1290,17 +1284,12 @@ function getStatisticsDetailed(startStr, endStr) {
       return total;
     }
 
-    // ============================================================
-    // 5. Résultat final — NOUVEAU : inclure aussi configLists pour le front
-    // ============================================================
     return {
-      // Sous-cartes Présence
       presents: presents,
       mineurs_moins_15: mineurs_moins_15,
       filles: filles,
       nouveaux: nouveaux,
 
-      // Listes détaillées (compteurs par item)
       nationalites: countNationalites,
       langues: countLangues,
       types_evenements: countTypesEvenements,
@@ -1317,13 +1306,10 @@ function getStatisticsDetailed(startStr, endStr) {
       total_types_contact: sumValues(countTypesContact),
       lieux_vie: countLieuxVie,
 
-      // Items orphelins
       orphelins: orphelins,
 
-      // NOUVEAU : Listes BDD_CONFIG brutes (pour que le front puisse afficher les items à 0 dans le sélecteur favoris)
       config_lists: configLists,
 
-      // Métadonnées période
       periode_debut: formatDate(start),
       periode_fin: formatDate(end)
     };
@@ -1343,7 +1329,6 @@ function getStatistics(startStr, endStr) {
     const wsJeunes = ss.getSheetByName('BDD_JEUNES');
     const wsEvents = ss.getSheetByName('BDD_EVENTS');
     
-    // Dates
     let start = parseDateSecure(startStr);
     let end = parseDateSecure(endStr);
     end.setHours(23, 59, 59); 
@@ -1351,7 +1336,6 @@ function getStatistics(startStr, endStr) {
     const dataJeunes = wsJeunes.getDataRange().getValues();
     const dataEvents = wsEvents.getDataRange().getValues();
 
-    // Initialisation Compteurs
     let stats = {
       nouveaux: 0,
       total_actifs: 0,
@@ -1376,16 +1360,14 @@ function getStatistics(startStr, endStr) {
       nationalites: {},
       ages: {},
       vulnerabilites: {},
-      // C14 : Vulnérabilités ajoutées sur la période via événements
       vulnerabilites_periode: {}
     };
 
-    // 1. Analyse Jeunes
     for (let i = 1; i < dataJeunes.length; i++) {
-      let dateCreation = parseDateSecure(dataJeunes[i][18]); // Col S
-      let statutPres = String(dataJeunes[i][9] || "").toLowerCase().trim(); // Col J
-      let genre = String(dataJeunes[i][6]).toUpperCase(); // Col G
-      let vulns = String(dataJeunes[i][15]).toLowerCase(); // Col P
+      let dateCreation = parseDateSecure(dataJeunes[i][18]);
+      let statutPres = String(dataJeunes[i][9] || "").toLowerCase().trim();
+      let genre = String(dataJeunes[i][6]).toUpperCase();
+      let vulns = String(dataJeunes[i][15]).toLowerCase();
       let age = dataJeunes[i][5];
 
       if (statutPres.includes("présent") || statutPres.includes("mab (foyer)")) {
@@ -1395,7 +1377,6 @@ function getStatistics(startStr, endStr) {
         if (genre === "F" || genre === "FEMININ") stats.filles++;
         if (vulns.includes("emprise")) stats.sous_emprise++;
         
-        // Vuln breakdown
         if(vulns) {
           vulns.split(',').forEach(v => {
             let vt = v.trim();
@@ -1404,7 +1385,6 @@ function getStatistics(startStr, endStr) {
         }
       }
 
-      // Nouveaux dans la période
       if (dateCreation >= start && dateCreation <= end) {
         stats.nouveaux++;
         let nat = dataJeunes[i][7] || "Inconnue";
@@ -1421,17 +1401,15 @@ function getStatistics(startStr, endStr) {
       }
     }
 
-    // 2. Analyse Events
     for (let j = 1; j < dataEvents.length; j++) {
-      let dateEvt = parseDateSecure(dataEvents[j][2]); // Col C
+      let dateEvt = parseDateSecure(dataEvents[j][2]);
       if (dateEvt >= start && dateEvt <= end) {
-        let type = String(dataEvents[j][3]).toLowerCase(); // Col D
-        let details = String(dataEvents[j][6]).toLowerCase(); // Col G
-        let motif = String(dataEvents[j][9]).toLowerCase(); // Col J (M1: maintenant MOTIF_STATUT_MAB)
-        let materiel = String(dataEvents[j][11]).toLowerCase(); // Col L
+        let type = String(dataEvents[j][3]).toLowerCase();
+        let details = String(dataEvents[j][6]).toLowerCase();
+        let motif = String(dataEvents[j][9]).toLowerCase();
+        let materiel = String(dataEvents[j][11]).toLowerCase();
         let idJeune = dataEvents[j][1];
-        // C14 : Vulnérabilités ajoutées par cet événement
-        let newVulnsEvt = String(dataEvents[j][10] || "").toLowerCase(); // Col K
+        let newVulnsEvt = String(dataEvents[j][10] || "").toLowerCase();
 
         stats.total_events_period++;
         stats.jeunes_with_events.add(idJeune);
@@ -1451,7 +1429,6 @@ function getStatistics(startStr, endStr) {
 
         if (materiel.includes("tente")) stats.tentes_distribuees++;
         
-        // C14 : Comptage des vulnérabilités apparues sur la période
         if (newVulnsEvt) {
           newVulnsEvt.split(',').forEach(v => {
             let vt = v.trim();
@@ -1461,7 +1438,6 @@ function getStatistics(startStr, endStr) {
       }
     }
 
-    // C13 : Nombre de jeunes ayant vécu au moins un événement sur la période
     stats.nb_jeunes_concernes = stats.jeunes_with_events.size;
     stats.avg_event_per_youth = stats.nb_jeunes_concernes > 0 ? (stats.total_events_period / stats.nb_jeunes_concernes).toFixed(1) : 0;
     stats.avg_eviction_per_youth = stats.total_actifs > 0 ? (stats.evictions / stats.total_actifs).toFixed(2) : 0; 
@@ -1486,14 +1462,11 @@ function generateReportText(idJeune) {
   const j = info.jeune;
   const hist = info.history;
   
-  // Date du jour formatée
   const aujourdhui = formatDate(new Date());
   
-  // Calcul de l'ancienneté sur le terrain
   let chronoHist = [...hist].reverse();
   let premierEvt = chronoHist.length > 0 ? chronoHist[0].date : "Inconnue";
   
-  // Comptage des événements significatifs pour le rapport
   let nbEvictions = 0;
   let nbViolencesPolice = 0;
   let nbViolencesTiers = 0;
@@ -1640,4 +1613,335 @@ function generateReportText(idJeune) {
   txt += "=========================================================================\n";
   
   return txt;
+}
+// ============================================================================
+//          PHASE 3 : WIDGET CONFIG ITEMS POUR PLAIDOYER
+// ============================================================================
+
+function getWidgetConfigItems() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const wsConfig = ss.getSheetByName('BDD_CONFIG');
+  const dataConfig = wsConfig.getDataRange().getValues();
+  
+  let result = {};
+  if (dataConfig.length > 0) {
+    const headers = dataConfig[0];
+    for (let col = 0; col < headers.length; col++) {
+      let key = headers[col];
+      if (!key) continue;
+      let items = [];
+      for (let row = 1; row < dataConfig.length; row++) {
+        let val = String(dataConfig[row][col] || "").trim();
+        if (val !== "") {
+          let isSeparator = val.startsWith('---') && val.endsWith('---');
+          items.push({ value: val, isSeparator: isSeparator, label: isSeparator ? val.replace(/---/g, '').trim() : val });
+        }
+      }
+      result[key] = items;
+    }
+  }
+  return result;
+}
+
+// ============================================================================
+//  CHERCHER dans Code.gs la fonction computeAllWidgets (ajoutée en Phase 3)
+//  ET LA REMPLACER ENTIÈREMENT par celle-ci.
+//  
+//  La fonction getWidgetConfigItems() reste inchangée.
+// ============================================================================
+
+function computeAllWidgets(widgets, startStr, endStr) {
+  var stats = getStatisticsDetailed(startStr, endStr);
+  var subcards = { 'presents': 'Présents', 'mineurs_moins_15': 'Moins de 15 ans', 'filles': 'Filles', 'nouveaux': 'Nouveaux' };
+  var results = {};
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  
+  // Charger les données une seule fois
+  var wsJ = ss.getSheetByName('BDD_JEUNES');
+  var wsE = ss.getSheetByName('BDD_EVENTS');
+  var dJ = wsJ.getDataRange().getValues();
+  var dE = wsE.getDataRange().getValues();
+  var start = parseDateSecure(startStr);
+  var end = parseDateSecure(endStr);
+  end.setHours(23, 59, 59);
+  
+  var jeunesFields = { 
+    'statut_presence': 9, 'statut_mab': 10, 'nationalite': 7, 'genre': 6, 
+    'lieu_vie': 14, 'vulnerabilites': 15, 'langue': 8, 'age': 5, 'labels': 20 
+  };
+  var eventsFields = { 
+    'type_evenement': 3, 'type_contact': 4, 'lieu_event': 5, 
+    'motif_statut_mab': 9, 'materiel': 11 
+  };
+  
+  widgets.forEach(function(widget) {
+    try {
+      if (widget.type === 'single_item') {
+        if (subcards[widget.category]) {
+          results[widget.id] = { value: stats[widget.category] || 0 };
+        } else {
+          var data = stats[widget.category];
+          results[widget.id] = { value: (data && data[widget.item] !== undefined) ? data[widget.item] : 0 };
+        }
+        
+      } else if (widget.type === 'item_list') {
+        var items = widget.items || [];
+        var listResults = [];
+        items.forEach(function(it) {
+          if (subcards[it.category]) {
+            listResults.push({ name: it.name || subcards[it.category], count: stats[it.category] || 0 });
+          } else {
+            var data = stats[it.category];
+            var val = (data && data[it.name] !== undefined) ? data[it.name] : 0;
+            listResults.push({ name: it.name, count: val });
+          }
+        });
+        results[widget.id] = { items: listResults };
+        
+      } else if (widget.type === 'custom_stat') {
+        // NOUVEAU : Support conditions multiples (jeunes ET/OU events)
+        var conditions = widget.conditions || [];
+        if (conditions.length === 0 && widget.query) {
+          // Rétrocompatibilité ancien format single query
+          conditions = [widget.query];
+        }
+        
+        // Séparer les conditions jeunes et events
+        var condJeunes = [];
+        var condEvents = [];
+        conditions.forEach(function(c) {
+          if (c.source === 'events') condEvents.push(c);
+          else condJeunes.push(c);
+        });
+        
+        // Calculer les IDs de jeunes matchant les conditions jeunes
+        var jeuneIdsPool = null; // null = pas de filtre jeunes (tous)
+        
+        if (condJeunes.length > 0) {
+          jeuneIdsPool = new Set();
+          for (var i = 1; i < dJ.length; i++) {
+            var matchAll = true;
+            
+            // Filtre actifs uniquement (si au moins une condition le demande)
+            var needActive = condJeunes.some(function(c) { return c.activeOnly; });
+            if (needActive) {
+              var sP = String(dJ[i][9] || "").toLowerCase();
+              if (!(sP.includes("présent") || sP.includes("mab (foyer)") || sP.includes("hospitalisé"))) {
+                continue;
+              }
+            }
+            
+            for (var ci = 0; ci < condJeunes.length; ci++) {
+              var c = condJeunes[ci];
+              var colIdx = jeunesFields[c.field];
+              if (colIdx === undefined) { matchAll = false; break; }
+              var cV = String(dJ[i][colIdx] || "").toLowerCase();
+              var qV = String(c.value || "").toLowerCase();
+              
+              if (!matchCondition(cV, c.operator, qV)) {
+                matchAll = false;
+                break;
+              }
+            }
+            if (matchAll) jeuneIdsPool.add(dJ[i][0]);
+          }
+        }
+        
+        // Si pas de conditions events, le résultat = taille du pool jeunes
+        if (condEvents.length === 0) {
+          var count = jeuneIdsPool ? jeuneIdsPool.size : 0;
+          var total = 0;
+          for (var t = 1; t < dJ.length; t++) total++;
+          var pct = total > 0 ? Math.round((count / total) * 100) : 0;
+          results[widget.id] = { value: count, total: total, percentage: pct };
+        } else {
+          // Filtrer les events par conditions events + pool jeunes
+          var matchedJeunes = new Set();
+          var totalEventsChecked = 0;
+          var matchedEvents = 0;
+          
+          for (var j = 1; j < dE.length; j++) {
+            var dateEvt = parseDateSecure(dE[j][2]);
+            if (dateEvt < start || dateEvt > end) continue;
+            
+            // Si on a un pool jeunes, vérifier que cet event concerne un jeune du pool
+            var evtJeuneId = dE[j][1];
+            if (jeuneIdsPool && !jeuneIdsPool.has(evtJeuneId)) continue;
+            
+            totalEventsChecked++;
+            
+            var matchAllEvt = true;
+            for (var ei = 0; ei < condEvents.length; ei++) {
+              var ce = condEvents[ei];
+              var eColIdx = eventsFields[ce.field];
+              if (eColIdx === undefined) { matchAllEvt = false; break; }
+              var eV = String(dE[j][eColIdx] || "").toLowerCase();
+              var eqV = String(ce.value || "").toLowerCase();
+              
+              if (!matchCondition(eV, ce.operator, eqV)) {
+                matchAllEvt = false;
+                break;
+              }
+            }
+            if (matchAllEvt) {
+              matchedJeunes.add(evtJeuneId);
+              matchedEvents++;
+            }
+          }
+          
+          // Le mode résultat : nombre de jeunes uniques matchant
+          var useJeuneCount = widget.resultMode !== 'events';
+          var finalCount = useJeuneCount ? matchedJeunes.size : matchedEvents;
+          var finalTotal = useJeuneCount ? (jeuneIdsPool ? jeuneIdsPool.size : matchedJeunes.size) : totalEventsChecked;
+          var finalPct = finalTotal > 0 ? Math.round((finalCount / finalTotal) * 100) : 0;
+          
+          results[widget.id] = { 
+            value: finalCount, 
+            total: finalTotal, 
+            percentage: finalPct,
+            jeunesCount: matchedJeunes.size,
+            eventsCount: matchedEvents
+          };
+        }
+      }
+    } catch(e) {
+      results[widget.id] = { value: 0, error: e.toString() };
+    }
+  });
+  
+  results['_fullStats'] = stats;
+  return results;
+}
+
+// Fonction utilitaire pour évaluer une condition
+function matchCondition(cellValue, operator, queryValue) {
+  switch(operator) {
+    case 'equals': return cellValue === queryValue;
+    case 'contains': return cellValue.includes(queryValue);
+    case 'not_contains': return !cellValue.includes(queryValue);
+    case 'not_empty': return cellValue !== "";
+    case 'empty': return cellValue === "";
+    case 'less_than': return parseInt(cellValue) < parseInt(queryValue);
+    case 'greater_than': return parseInt(cellValue) > parseInt(queryValue);
+    default: return false;
+  }
+}
+
+// Récupère les données d'un jeune épinglé (carte résumée pour dashboard)
+function getDashboardJeuneCard(idJeune) {
+  const ws = SpreadsheetApp.openById(SHEET_ID).getSheetByName('BDD_JEUNES');
+  const data = ws.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] == idJeune) {
+      return {
+        success: true,
+        jeune: {
+          id: data[i][0],
+          nom: data[i][3],
+          surnom: data[i][4],
+          age: data[i][5],
+          tel: data[i][2],
+          nationalite: data[i][7],
+          lieu_vie: data[i][14],
+          statut_presence: data[i][9],
+          statut_mab: data[i][10],
+          vulnerabilites: data[i][15] || "",
+          date_contact: formatDate(data[i][11])
+        }
+      };
+    }
+  }
+  return { success: false, message: "Jeune introuvable" };
+}
+
+// Récupère un résumé des rappels pour le widget dashboard
+function getDashboardRappelsSummary() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const wsRappels = ss.getSheetByName('BDD_RAPPELS');
+  const wsJeunes = ss.getSheetByName('BDD_JEUNES');
+  
+  const dataRappels = wsRappels.getDataRange().getValues();
+  const dataJeunes = wsJeunes.getDataRange().getValues();
+  
+  let jeunesMap = {};
+  for(let i=1; i<dataJeunes.length; i++) {
+    jeunesMap[dataJeunes[i][0]] = { nom: dataJeunes[i][3] };
+  }
+  
+  const today = new Date(); 
+  today.setHours(0,0,0,0);
+  let enRetard = 0;
+  let aFaire = 0;
+  let prochains = []; // Les 5 prochains rappels
+
+  for (let i = 1; i < dataRappels.length; i++) {
+    try {
+      let statut = String(dataRappels[i][5] || "").toLowerCase().trim();
+      if (statut.indexOf("faire") !== -1) {
+        let echeance = parseDateSecure(dataRappels[i][4]);
+        let idJeune = dataRappels[i][0];
+        let jInfo = jeunesMap[idJeune] || { nom: "Inconnu" };
+        
+        if (echeance < today) {
+          enRetard++;
+        } else {
+          aFaire++;
+        }
+        
+        if (prochains.length < 8) {
+          prochains.push({
+            idRappel: dataRappels[i][1],
+            idJeune: idJeune,
+            nomJeune: jInfo.nom,
+            titre: String(dataRappels[i][6] || "Sans titre"),
+            date: formatDate(echeance),
+            isLate: echeance < today
+          });
+        }
+      }
+    } catch(e) {}
+  }
+  
+  // Trier: en retard d'abord
+  prochains.sort(function(a,b) {
+    if (a.isLate && !b.isLate) return -1;
+    if (!a.isLate && b.isLate) return 1;
+    return 0;
+  });
+
+  return { enRetard: enRetard, aFaire: aFaire, prochains: prochains };
+}
+
+// ============================================================================
+// PHASE 4 FIX : Stockage préférences PAR UTILISATEUR TAMABochi (spreadsheet)
+// ============================================================================
+
+function saveUserPref(userEmail, cle, valeur) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('BDD_PREFS');
+  if (!sheet) {
+    sheet = ss.insertSheet('BDD_PREFS');
+    sheet.appendRow(['email', 'cle', 'valeur']);
+  }
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === userEmail && data[i][1] === cle) {
+      sheet.getRange(i + 1, 3).setValue(valeur);
+      return;
+    }
+  }
+  sheet.appendRow([userEmail, cle, valeur]);
+}
+
+function loadUserPref(userEmail, cle) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('BDD_PREFS');
+  if (!sheet) return null;
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === userEmail && data[i][1] === cle) {
+      return data[i][2] || null;
+    }
+  }
+  return null;
 }
