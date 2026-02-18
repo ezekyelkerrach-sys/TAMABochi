@@ -27,7 +27,7 @@
           <p class="text-muted">Utopia 56 Grande-Synthe</p>
         </div>
         <div class="mb-3">
-          <label class="fw-bold small">Email</label>
+          <label class="fw-bold small">Identifiant</label>
           <input type="email" id="login-email" class="form-control form-control-lg">
         </div>
         <div class="mb-4">
@@ -68,59 +68,21 @@
           <!--              VUE DASHBOARD                   -->
           <!-- ============================================ -->
           <div id="view-dashboard" class="content-view">
-            <h2 class="fw-bold mb-4">Tableau de bord <small class="text-muted fs-6 ms-2">Aujourd'hui</small></h2>
-            
-            <!-- U3 : Raccourcis rapides -->
-            <div class="row g-3 mb-4">
-              <div class="col-md-3">
-                <div class="quick-action-btn" onclick="navigate('enregistrement')">
-                  <i class="fas fa-user-plus text-primary"></i>
-                  <span>Nouveau Jeune</span>
-                </div>
-              </div>
-              <div class="col-md-3">
-                <div class="quick-action-btn" onclick="navigate('suivi')">
-                  <i class="fas fa-search text-info"></i>
-                  <span>Chercher un Jeune</span>
-                </div>
-              </div>
-              <div class="col-md-3">
-                <div class="quick-action-btn" onclick="navigate('suivi'); setTimeout(function(){ openEvictionModal(); }, 300);">
-                  <i class="fas fa-house-chimney-crack text-danger"></i>
-                  <span>Déclarer Éviction</span>
-                </div>
-              </div>
-              <div class="col-md-3">
-                <div class="quick-action-btn" onclick="navigate('plaidoyer')">
-                  <i class="fas fa-chart-pie text-warning"></i>
-                  <span>Voir les Stats</span>
-                </div>
+            <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+              <h2 class="fw-bold mb-0">Tableau de bord</h2>
+              <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-primary" onclick="openAddDashWidgetModal()"><i class="fas fa-plus me-1"></i> Ajouter un widget</button>
+                <button class="btn btn-sm btn-outline-primary layout-toggle-btn" id="btn-dash-layout-mode" onclick="toggleDashLayoutMode()"><i class="fas fa-th me-1"></i> Disposer</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="refreshDashboardWidgets()"><i class="fas fa-sync me-1"></i></button>
               </div>
             </div>
 
-            <div class="row">
-              <div class="col-md-5">
-                <div class="card p-4 h-100">
-                  <h5 class="fw-bold mb-3"><i class="fas fa-chart-line me-2 text-primary"></i>Activité du mois</h5>
-                  <div class="row g-3">
-                     <div class="col-6"><div class="dash-mini-card text-center"><div class="fs-2 fw-bold text-primary" id="dash-nouveaux">-</div><small class="text-muted">Nouveaux</small></div></div>
-                     <div class="col-6"><div class="dash-mini-card text-center"><div class="fs-2 fw-bold text-dark" id="dash-actifs">-</div><small class="text-muted">Actifs (Stock)</small></div></div>
-                     <div class="col-6"><div class="dash-mini-card text-center"><div class="fs-2 fw-bold text-info" id="dash-demandes">-</div><small class="text-muted">Demandes MAB</small></div></div>
-                     <div class="col-6"><div class="dash-mini-card text-center"><div class="fs-2 fw-bold text-danger" id="dash-evictions">-</div><small class="text-muted">Évictions</small></div></div>
-                  </div>
-                  <div class="mt-3 text-center">
-                    <button class="btn btn-sm btn-outline-primary w-100" onclick="navigate('plaidoyer')">Voir toutes les stats</button>
-                  </div>
-                </div>
-              </div>
-              <div class="col-md-7">
-                <div class="card p-4 h-100">
-                  <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="fw-bold m-0"><i class="fas fa-bell me-2 text-warning"></i>A faire</h5>
-                    <button class="btn btn-sm btn-light" onclick="loadDashboard()">Actualiser</button>
-                  </div>
-                  <div id="dash-rappels-list" style="overflow-y:auto; max-height:400px;"></div>
-                </div>
+            <div id="dashboard-widgets-grid" class="dashboard-widgets-grid">
+              <div class="dash-empty-state" id="dash-widgets-empty">
+                <i class="fas fa-puzzle-piece fa-3x mb-3 text-primary"></i>
+                <p class="text-muted">Personnalisez votre tableau de bord en ajoutant des widgets.</p>
+                <button class="btn btn-sm btn-primary text-white" onclick="openAddDashWidgetModal()"><i class="fas fa-plus me-1"></i> Ajouter un widget</button>
+                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="loadDefaultDashWidgets()"><i class="fas fa-magic me-1"></i> Config par défaut</button>
               </div>
             </div>
           </div>
@@ -209,8 +171,8 @@
                     <h5 class="text-primary fw-bold mb-3">Identité</h5>
                     <div class="row mb-3">
                       <div class="col-md-6">
-                        <label class="form-label">Téléphone *</label>
-                        <input type="text" class="form-control" id="new-tel" required onchange="verifierDoublon(this.value)">
+                        <label class="form-label">Téléphone</label>
+                        <input type="text" class="form-control" id="new-tel" onchange="verifierDoublon(this.value)">
                         <div id="alert-doublon" class="form-text text-danger fw-bold"></div>
                       </div>
                       <div class="col-md-6">
@@ -257,7 +219,7 @@
                       </div>
                       <div id="new-link-group-section" class="d-none mt-2">
                         <p class="text-muted small mb-2">Recherchez et sélectionnez les jeunes à lier à ce nouveau jeune (groupe commun, sans partager le même numéro).</p>
-                        <button type="button" class="btn btn-sm btn-outline-info" onclick="openGroupLinkModal('enregistrement')">
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="openGroupLinkModal('enregistrement')">
                           <i class="fas fa-search me-1"></i> Rechercher des jeunes à lier
                         </button>
                         <div id="new-link-group-selected" class="mt-2 d-flex flex-wrap gap-1">
@@ -272,7 +234,7 @@
                     </div>
 
                     <div class="mb-3">
-                      <label class="form-label text-info fw-bold">Labels / Autres Assos</label>
+                      <label class="form-label text-primary fw-bold">Labels / Autres Assos</label>
                       <div id="new-labels" class="custom-dropdown" data-config="LABELS_CONTACTS_AUTRES" data-mode="multi" data-placeholder="Sélectionner..."></div>
                     </div>
 
@@ -305,10 +267,10 @@
                     <!-- M2 : Enregistrer & Terminer redirige vers la fiche -->
                     <div class="row g-2 mt-3">
                       <div class="col-md-6">
-                        <button type="button" class="btn btn-outline-success w-100" onclick="soumettreNouveauJeune(null, true, false)"><i class="fas fa-user-plus me-1"></i> Enregistrer + Ajouter Autre</button>
+                        <button type="button" class="btn btn-outline-success w-100" onclick="soumettreNouveauJeune(null, true, false)"><i class="fas fa-user-plus me-1"></i> Enregistrer & Ajouter Autre</button>
                       </div>
                       <div class="col-md-6">
-                        <button type="button" class="btn btn-success w-100" onclick="soumettreNouveauJeune(null, false, true)"><i class="fas fa-check me-1"></i> Enregistrer & Terminer</button>
+                        <button type="button" class="btn btn-success w-100" onclick="soumettreNouveauJeune(null, false, true)"><i class="fas fa-check me-1"></i> Enregistrer & Accéder à la fiche</button>
                       </div>
                     </div>
                   </form>
@@ -320,74 +282,59 @@
           <!-- ============================================ -->
           <!--          VUE PLAIDOYER & STATS               -->
           <!-- ============================================ -->
+          <!-- ============================================ -->
+          <!--          VUE PLAIDOYER & STATS (PHASE 3)     -->
+          <!-- ============================================ -->
           <div id="view-plaidoyer" class="content-view d-none">
-            <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-              <h2 class="fw-bold"><i class="fas fa-chart-pie text-info me-2"></i>Statistiques & Plaidoyer</h2>
-              <div class="d-flex gap-2">
-                <!-- NOUVEAU : Bouton Gérer Favoris (remplace Export CSV) -->
-                <button class="btn btn-outline-warning" onclick="openManageFavorisModal()"><i class="fas fa-star me-2"></i> Gérer Favoris</button>
-                <button class="btn btn-dark" onclick="copyStatsSummary()"><i class="fas fa-copy me-2"></i> Copier Récapitulatif</button>
+
+            <!-- BARRE SUPERIEURE : Dates + Actions -->
+            <div class="plaidoyer-topbar card p-4 mb-4">
+              <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
+                <h2 class="fw-bold mb-0"><i class="fas fa-chart-pie text-primary me-2"></i>Plaidoyer</h2>
+                <div class="d-flex gap-2 flex-wrap">
+                  <button class="btn btn-sm btn-outline-secondary" onclick="openConfigViewerModal()"><i class="fas fa-list me-1"></i> Stats listes config</button>
+                  <button class="btn btn-sm btn-outline-primary layout-toggle-btn" id="btn-layout-mode" onclick="toggleLayoutMode()"><i class="fas fa-th me-1"></i> Disposer</button>
+                  <button class="btn btn-sm btn-dark" onclick="openCopyWidgetsModal()"><i class="fas fa-copy me-1"></i> Copier</button>
+                </div>
               </div>
-            </div>
-            
-            <div class="card p-4 mb-4">
-              <h5 class="card-title fw-bold mb-3">Période d'analyse</h5>
+
               <div class="row g-3 align-items-end">
-                <div class="col-md-4">
+                <div class="col-md-3">
                   <label class="form-label">Date Début</label>
                   <input type="date" class="form-control" id="stats-start">
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                   <label class="form-label">Date Fin</label>
                   <input type="date" class="form-control" id="stats-end">
                 </div>
-                <div class="col-md-4">
-                  <button class="btn btn-info text-white w-100" onclick="loadStats()">Calculer les statistiques</button>
+                <div class="col-md-6 d-flex gap-2 flex-wrap align-items-end">
+                  <button class="btn btn-outline-primary btn-sm" onclick="setQuickDate(7)">7 derniers jours</button>
+                  <button class="btn btn-outline-primary btn-sm" onclick="setQuickDate(30)">Dernier mois</button>
+                  <button class="btn btn-primary text-white" onclick="computeWidgets()"><i class="fas fa-calculator me-1"></i> Calculer</button>
                 </div>
               </div>
             </div>
 
-            <!-- ====== NOUVEAU : RESULTATS STATS DETAILLES ====== -->
-            <div id="stats-results" class="d-none">
-
-              <!-- CARTE PRESENCE : 4 sous-cartes -->
-              <div class="card p-4 mb-4 stats-presence-card">
-                <h5 class="fw-bold mb-3"><i class="fas fa-users me-2 text-primary"></i>Population</h5>
-                <div class="row g-3">
-                  <div class="col-md-3"><div class="card stat-card stat-sub-card"><div class="stat-num text-primary" id="stat-presents">-</div><div class="stat-label">Présents</div></div></div>
-                  <div class="col-md-3"><div class="card stat-card stat-sub-card"><div class="stat-num text-warning" id="stat-m15">-</div><div class="stat-label">Moins de 15 ans</div></div></div>
-                  <div class="col-md-3"><div class="card stat-card stat-sub-card"><div class="stat-num text-danger" id="stat-filles">-</div><div class="stat-label">Filles</div></div></div>
-                  <div class="col-md-3"><div class="card stat-card stat-sub-card"><div class="stat-num text-success" id="stat-nouveaux">-</div><div class="stat-label">Nouveaux (période)</div></div></div>
-                </div>
-              </div>
-
-              <!-- FAVORIS : zone d'affichage des listes favorites (remplies dynamiquement par JS) -->
-              <div id="stats-favoris-container" class="mb-4 d-none"></div>
-
-              <!-- BOUTONS TOUT AFFICHER / TOUT MASQUER -->
-              <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
-                <button class="btn btn-sm btn-outline-dark" onclick="toggleAllStatsCards(true)"><i class="fas fa-eye me-1"></i> Tout afficher</button>
-                <button class="btn btn-sm btn-outline-dark" onclick="toggleAllStatsCards(false)"><i class="fas fa-eye-slash me-1"></i> Tout masquer</button>
-                <button class="btn btn-sm btn-outline-warning" onclick="openCustomizeFavoriModal()"><i class="fas fa-star me-1"></i> Créer un favori</button>
-                <span class="text-muted small ms-2" id="stats-periode-label"></span>
-              </div>
-
-              <!-- CARTES LISTES BDD_CONFIG (chacune peut être show/hide) -->
-              <div id="stats-lists-container">
-                <!-- Les cartes sont générées dynamiquement par JS -->
-              </div>
-
-              <!-- CARTE ORPHELINS -->
-              <div id="stats-orphelins-card" class="card p-4 mb-4 d-none border-warning">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                  <h5 class="fw-bold text-warning mb-0"><i class="fas fa-ghost me-2"></i>Items orphelins</h5>
-                  <button class="btn btn-sm btn-outline-secondary" onclick="toggleStatsCard('orphelins')"><i class="fas fa-eye-slash"></i></button>
-                </div>
-                <p class="text-muted small mb-3">Items présents dans les données mais absents de la configuration actuelle (BDD_CONFIG).</p>
-                <div id="stats-orphelins-list" class="row g-2"></div>
-              </div>
-
+            <!-- BOUTONS AJOUT WIDGETS -->
+            <div class="d-flex gap-2 mb-4 flex-wrap">
+              <button class="btn btn-outline-primary" onclick="openCreateStatModal()"><i class="fas fa-plus-circle me-1"></i> Créer une stat</button>
+              <button class="btn btn-outline-primary" onclick="openAddSingleItemModal()"><i class="fas fa-plus me-1"></i> Ajouter une stat</button>
+              <button class="btn btn-outline-primary" onclick="openAddItemListModal()"><i class="fas fa-th-list me-1"></i> Ajouter une liste</button>
             </div>
+
+            <!-- GRILLE DE WIDGETS -->
+            <div id="widgets-grid" class="widgets-grid">
+              <div class="text-center text-muted py-5 w-100" id="widgets-empty">
+                <i class="fas fa-puzzle-piece fa-3x mb-3 text-primary" style="opacity:0.3"></i>
+                <p>Ajoutez vos premiers widgets pour personnaliser votre vue Plaidoyer.</p>
+                <div class="d-flex gap-2 justify-content-center">
+                  <button class="btn btn-sm btn-outline-primary" onclick="openCreateStatModal()"><i class="fas fa-plus-circle me-1"></i> Créer une stat</button>
+                  <button class="btn btn-sm btn-outline-primary" onclick="openAddSingleItemModal()"><i class="fas fa-plus me-1"></i> Ajouter une stat</button>
+                  <button class="btn btn-sm btn-outline-primary" onclick="openAddItemListModal()"><i class="fas fa-th-list me-1"></i> Ajouter une liste</button>
+                </div>
+              </div>
+            </div>
+
           </div>
           
           <!-- ============================================ -->
@@ -398,7 +345,7 @@
               <h2 class="fw-bold"><i class="fas fa-bell text-warning me-2"></i>Rappels & Suivi</h2>
               <div class="d-flex gap-2">
                 <!-- C16 : Bouton nouveau rappel depuis vue Rappels -->
-                <button class="btn btn-sm btn-danger" onclick="openRappelFromViewModal()"><i class="fas fa-plus me-1"></i> Nouveau Rappel</button>
+                <button class="btn btn-sm btn-primary" onclick="openRappelFromViewModal()"><i class="fas fa-plus me-1"></i> Nouveau Rappel</button>
                 <button class="btn btn-sm btn-outline-secondary" onclick="loadRappels()"><i class="fas fa-sync"></i> Actualiser</button>
               </div>
             </div>
@@ -475,17 +422,18 @@
                 </div>
                 
                 <div id="btn-see-group" class="d-grid mt-2 mb-3 d-none">
-                  <button class="btn btn-sm btn-info text-white" onclick="showGroupMembers()"><i class="fas fa-users me-2"></i>Voir le groupe</button>
+                  <button class="btn btn-sm btn-primary text-white" onclick="showGroupMembers()"><i class="fas fa-users me-2"></i>Voir le groupe</button>
                 </div>
 
                 <!-- NOUVEAU : Bouton Lier à un autre jeune/groupe -->
                 <div class="d-grid mb-3">
-                  <button class="btn btn-sm btn-outline-info" onclick="openGroupLinkModal('fiche')"><i class="fas fa-link me-2"></i>Lier à un autre jeune / groupe</button>
+                  <button class="btn btn-sm btn-outline-primary" onclick="openGroupLinkModal('fiche')"><i class="fas fa-link me-2"></i>Lier à un autre jeune / groupe</button>
                 </div>
 
                 <div class="p-3 bg-light rounded mb-3">
                   <div class="d-flex justify-content-between mb-2"><strong>Tel:</strong> <span id="fiche-tel"></span></div>
                   <div class="d-flex justify-content-between mb-2"><strong>Age:</strong> <span id="fiche-age"></span></div>
+                  <div class="d-flex justify-content-between mb-2"><strong>Genre:</strong> <span id="fiche-genre"></span></div>
                   <div class="d-flex justify-content-between mb-2"><strong>Nat:</strong> <span id="fiche-nat"></span></div>
                   <div class="d-flex justify-content-between mb-2"><strong>Lieu:</strong> <span id="fiche-lieu"></span></div>
                   <!-- C9 : Date dernière distribution -->
@@ -498,6 +446,7 @@
                   <small class="text-uppercase text-muted fw-bold">Statuts</small>
                   <div class="mt-2 d-flex flex-column gap-2">
                     <span class="badge bg-primary text-start p-2" id="fiche-statut-mab-full"></span>
+                    <span class="badge bg-light text-dark border text-start p-2" id="fiche-motif-mab" style="font-size:0.78em;"></span>
                     <span class="badge bg-secondary text-start p-2" id="fiche-statut-presence-full"></span>
                   </div>
                 </div>
@@ -518,7 +467,7 @@
                 </div>
 
                 <div class="d-grid mt-4 gap-2">
-                  <button class="btn btn-outline-danger" onclick="openAddReminderModal()"><i class="fas fa-bell me-2"></i> Ajouter un Rappel</button>
+                  <button class="btn btn-outline-primary" onclick="openAddReminderModal()"><i class="fas fa-bell me-2"></i> Ajouter un Rappel</button>
                   <button class="btn btn-dark" onclick="generateReport()"><i class="fas fa-file-alt me-2"></i> Générer Rapport / IP</button>
                 </div>
               </div>
@@ -527,7 +476,7 @@
               <div class="col-md-8">
                 <div class="d-flex justify-content-between align-items-center mb-3">
                   <h5 class="fw-bold m-0">Historique & Parcours</h5>
-                  <button class="btn btn-warning text-dark fw-bold" onclick="openAddEventModal()"><i class="fas fa-plus-circle me-2"></i>Nouvel Événement</button>
+                  <button class="btn btn-primary text-white fw-bold" onclick="openAddEventModal()"><i class="fas fa-plus-circle me-2"></i>Nouvel Événement</button>
                 </div>
                 
                 <div class="form-check form-switch mb-3">
@@ -609,7 +558,7 @@
             </form>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-danger w-100" onclick="soumettreRappelManuel()">Créer le Rappel</button>
+            <button type="button" class="btn btn-primary w-100" onclick="soumettreRappelManuel()">Créer le Rappel</button>
           </div>
         </div>
       </div>
@@ -621,7 +570,7 @@
     <div class="modal fade" id="modalRappelFromView" tabindex="-1" style="z-index: 1070;">
       <div class="modal-dialog">
         <div class="modal-content">
-          <div class="modal-header bg-danger text-white">
+          <div class="modal-header bg-primary text-white">
             <h5 class="modal-title"><i class="fas fa-bell me-2"></i>Nouveau Rappel</h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
           </div>
@@ -658,7 +607,7 @@
             </form>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-danger w-100" onclick="soumettreRappelFromView()">Créer le Rappel</button>
+            <button type="button" class="btn btn-primary w-100" onclick="soumettreRappelFromView()">Créer le Rappel</button>
           </div>
         </div>
       </div>
@@ -765,17 +714,22 @@
                 <textarea class="form-control" id="edit-notes-fixes" rows="2"></textarea>
               </div>
               <div class="mb-3">
-                <label class="form-label text-info fw-bold">Labels / Autres Assos</label>
-                <div id="edit-labels" class="custom-dropdown" data-config="LABELS_CONTACTS_AUTRES" data-mode="multi" data-placeholder="Sélectionner..."></div>
+               <label class="form-label text-primary fw-bold">Labels / Autres Assos</label>
+              <div id="edit-labels" class="custom-dropdown" data-config="LABELS_CONTACTS_AUTRES" data-mode="multi" data-placeholder="Sélectionner..."></div>
               </div>
-            </form>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-primary" onclick="saveEditProfile()">Enregistrer</button>
-          </div>
+              <hr>
+              <div class="mb-3">
+                <label class="form-label text-danger fw-bold">Vulnérabilités</label>
+              <div id="edit-vulns" class="custom-dropdown" data-config="VULNERABILITES_TAGS" data-mode="multi" data-placeholder="Sélectionner..."></div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" onclick="saveEditProfile()">Enregistrer</button>
         </div>
       </div>
     </div>
+  </div>
     
     <!-- ============================================ -->
     <!--       MODALE : MODIFIER EVENEMENT            -->
@@ -940,7 +894,7 @@
     <div class="modal fade" id="modalAddComment" tabindex="-1" style="z-index: 1070;">
       <div class="modal-dialog modal-sm">
         <div class="modal-content">
-          <div class="modal-header bg-info text-white">
+          <div class="modal-header bg-primary text-white">
             <h5 class="modal-title"><i class="fas fa-comment me-2"></i>Ajouter un commentaire</h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
           </div>
@@ -952,7 +906,7 @@
             </div>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-info text-white w-100" onclick="soumettreCommentRappel()"><i class="fas fa-check me-2"></i>Ajouter</button>
+            <button type="button" class="btn btn-primary text-white w-100" onclick="soumettreCommentRappel()"><i class="fas fa-check me-2"></i>Ajouter</button>
           </div>
         </div>
       </div>
@@ -1017,7 +971,7 @@
     <div class="modal fade" id="modalGroupLink" tabindex="-1" style="z-index: 1090;">
       <div class="modal-dialog modal-lg">
         <div class="modal-content">
-          <div class="modal-header bg-info text-white">
+          <div class="modal-header bg-primary text-white">
             <h5 class="modal-title"><i class="fas fa-link me-2"></i>Lier à un groupe</h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
           </div>
@@ -1029,7 +983,7 @@
               <label class="form-label fw-bold">Rechercher</label>
               <div class="input-group">
                 <input type="text" class="form-control" id="group-link-search" placeholder="Nom, surnom ou téléphone..." oninput="searchJeunesForGroupLinkUI(this.value)">
-                <button class="btn btn-outline-info" type="button" onclick="searchJeunesForGroupLinkUI(document.getElementById('group-link-search').value)"><i class="fas fa-search"></i></button>
+                <button class="btn btn-outline-primary" type="button" onclick="searchJeunesForGroupLinkUI(document.getElementById('group-link-search').value)"><i class="fas fa-search"></i></button>
               </div>
             </div>
 
@@ -1048,7 +1002,459 @@
           </div>
           <div class="modal-footer">
             <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuler</button>
-            <button type="button" class="btn btn-info text-white" onclick="confirmGroupLink()"><i class="fas fa-check me-2"></i>Confirmer la liaison</button>
+            <button type="button" class="btn btn-primary text-white" onclick="confirmGroupLink()"><i class="fas fa-check me-2"></i>Confirmer la liaison</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!--  PHASE 3.1 : MODALE CREER UNE STAT (MULTI)  -->
+    <!-- ============================================ -->
+    <div class="modal fade" id="modalCreateStat" tabindex="-1" style="z-index: 1080;">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title"><i class="fas fa-plus-circle me-2"></i>Créer une stat personnalisée</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <p class="text-muted small mb-3">Combinez des conditions sur les <strong>personnes</strong> et/ou les <strong>événements</strong> pour obtenir un chiffre précis.</p>
+            
+            <div class="row mb-3">
+              <div class="col-md-8">
+                <label class="form-label fw-bold">Titre du widget</label>
+                <input type="text" class="form-control" id="cs-title" placeholder="Ex: Filles actives ayant subi un refus MAB">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Emoji</label>
+                <input type="text" class="form-control" id="cs-emoji" value="📊" maxlength="4">
+              </div>
+            </div>
+
+            <!-- ZONE CONDITIONS -->
+            <div class="mb-3">
+              <label class="form-label fw-bold"><i class="fas fa-filter me-1 text-primary"></i> Conditions</label>
+              <div id="cs-conditions-list">
+                <!-- Les conditions s'ajoutent ici dynamiquement -->
+              </div>
+              <div class="d-flex gap-2 mt-2">
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addCSCondition('jeunes')">
+                  <i class="fas fa-user me-1"></i> + Condition sur les personnes
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-warning" onclick="addCSCondition('events')">
+                  <i class="fas fa-calendar me-1"></i> + Condition sur les événements
+                </button>
+              </div>
+            </div>
+
+            <!-- INFO AUTO-DETECTION -->
+            <div class="alert alert-info py-2 small" id="cs-auto-info">
+              <i class="fas fa-magic me-1"></i> <span id="cs-auto-info-text">Ajoutez des conditions pour définir votre requête.</span>
+            </div>
+
+            <!-- OPTIONS -->
+            <div class="row mb-3">
+              <div class="col-md-4">
+                <label class="form-label">Couleur</label>
+                <div class="d-flex gap-2" id="cs-color-picker">
+                  <span class="widget-color-swatch wc-teal-1 active" data-color="teal-1" onclick="pickColor('cs', this)"></span>
+                  <span class="widget-color-swatch wc-teal-2" data-color="teal-2" onclick="pickColor('cs', this)"></span>
+                  <span class="widget-color-swatch wc-teal-3" data-color="teal-3" onclick="pickColor('cs', this)"></span>
+                  <span class="widget-color-swatch wc-teal-4" data-color="teal-4" onclick="pickColor('cs', this)"></span>
+                  <span class="widget-color-swatch wc-teal-5" data-color="teal-5" onclick="pickColor('cs', this)"></span>
+                  <span class="widget-color-swatch wc-teal-6" data-color="teal-6" onclick="pickColor('cs', this)"></span>
+                </div>
+              </div>
+              <div class="col-md-2">
+                <label class="form-label">Largeur</label>
+                <input type="number" class="form-control" id="cs-colspan" value="3" min="1" max="12">
+                <small class="text-muted">colonnes</small>
+              </div>
+              <div class="col-md-2">
+                <label class="form-label">Hauteur</label>
+                <input type="number" class="form-control" id="cs-rowspan" value="2" min="1" max="8">
+                <small class="text-muted">lignes</small>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Compter</label>
+                <select class="form-select" id="cs-result-mode">
+                  <option value="jeunes">Nombre de personnes</option>
+                  <option value="events">Nombre d'événements</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button type="button" class="btn btn-primary text-white" onclick="saveCreateStatWidget()"><i class="fas fa-check me-1"></i> Créer le widget</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!--  PHASE 3 : MODALE AJOUTER UNE STAT          -->
+    <!-- ============================================ -->
+    <div class="modal fade" id="modalAddSingleItem" tabindex="-1" style="z-index: 1080;">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title"><i class="fas fa-plus me-2"></i>Ajouter une stat</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <p class="text-muted small mb-3">Choisissez un item d'une liste BDD_CONFIG pour l'afficher comme carte chiffrée.</p>
+            
+            <div class="mb-3">
+              <label class="form-label fw-bold">Catégorie</label>
+              <select class="form-select" id="asi-category" onchange="updateASIItems()">
+                <option value="">— Choisir —</option>
+                <option value="_subcards">Indicateurs Globaux</option>
+                <!-- Rempli dynamiquement -->
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-bold">Item</label>
+              <select class="form-select" id="asi-item">
+                <option value="">— Choisir une catégorie d'abord —</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Titre personnalisé (optionnel)</label>
+              <input type="text" class="form-control" id="asi-title" placeholder="Laissez vide pour le nom de l'item">
+            </div>
+            <div class="row mb-3">
+              <div class="col-6">
+                <label class="form-label">Emoji</label>
+                <input type="text" class="form-control" id="asi-emoji" value="📈" maxlength="4">
+              </div>
+              <div class="col-3">
+                <label class="form-label">Largeur</label>
+                <input type="number" class="form-control" id="asi-colspan" value="2" min="1" max="12">
+              </div>
+              <div class="col-3">
+                <label class="form-label">Hauteur</label>
+                <input type="number" class="form-control" id="asi-rowspan" value="2" min="1" max="8">
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Couleur</label>
+              <div class="d-flex gap-2" id="asi-color-picker">
+                <span class="widget-color-swatch wc-teal-1 active" data-color="teal-1" onclick="pickColor('asi', this)"></span>
+                <span class="widget-color-swatch wc-teal-2" data-color="teal-2" onclick="pickColor('asi', this)"></span>
+                <span class="widget-color-swatch wc-teal-3" data-color="teal-3" onclick="pickColor('asi', this)"></span>
+                <span class="widget-color-swatch wc-teal-4" data-color="teal-4" onclick="pickColor('asi', this)"></span>
+                <span class="widget-color-swatch wc-teal-5" data-color="teal-5" onclick="pickColor('asi', this)"></span>
+                <span class="widget-color-swatch wc-teal-6" data-color="teal-6" onclick="pickColor('asi', this)"></span>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button type="button" class="btn btn-primary text-white" onclick="saveSingleItemWidget()"><i class="fas fa-check me-1"></i> Ajouter</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!--  PHASE 3 : MODALE AJOUTER UNE LISTE         -->
+    <!-- ============================================ -->
+    <div class="modal fade" id="modalAddItemList" tabindex="-1" style="z-index: 1080;">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title"><i class="fas fa-th-list me-2"></i>Ajouter une liste de stats</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <p class="text-muted small mb-3">Sélectionnez plusieurs items de n'importe quelle liste pour créer une grande carte déroulable.</p>
+            
+            <div class="mb-3">
+              <label class="form-label fw-bold">Titre de la liste</label>
+              <input type="text" class="form-control" id="ail-title" placeholder="Ex: Vulnérabilités prioritaires">
+            </div>
+            <div class="row mb-3">
+              <div class="col-4">
+                <label class="form-label">Emoji</label>
+                <input type="text" class="form-control" id="ail-emoji" value="📋" maxlength="4">
+              </div>
+              <div class="col-4">
+                <label class="form-label">Couleur</label>
+                <div class="d-flex gap-2" id="ail-color-picker">
+                  <span class="widget-color-swatch wc-teal-1 active" data-color="teal-1" onclick="pickColor('ail', this)"></span>
+                  <span class="widget-color-swatch wc-teal-2" data-color="teal-2" onclick="pickColor('ail', this)"></span>
+                  <span class="widget-color-swatch wc-teal-3" data-color="teal-3" onclick="pickColor('ail', this)"></span>
+                  <span class="widget-color-swatch wc-teal-4" data-color="teal-4" onclick="pickColor('ail', this)"></span>
+                  <span class="widget-color-swatch wc-teal-5" data-color="teal-5" onclick="pickColor('ail', this)"></span>
+                  <span class="widget-color-swatch wc-teal-6" data-color="teal-6" onclick="pickColor('ail', this)"></span>
+                </div>
+              </div>
+              <div class="col-2">
+                <label class="form-label">Largeur</label>
+                <input type="number" class="form-control" id="ail-colspan" value="4" min="1" max="12">
+              </div>
+              <div class="col-2">
+                <label class="form-label">Hauteur</label>
+                <input type="number" class="form-control" id="ail-rowspan" value="3" min="1" max="8">
+              </div>
+            </div>
+             <hr>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <label class="form-label fw-bold mb-0">Sélection des items</label>
+              <div class="d-flex gap-1">
+                <button type="button" class="btn btn-xs btn-outline-primary" onclick="ailCheckAll(true)" style="font-size:0.72rem; padding:2px 8px;">Tout cocher</button>
+                <button type="button" class="btn btn-xs btn-outline-secondary" onclick="ailCheckAll(false)" style="font-size:0.72rem; padding:2px 8px;">Tout décocher</button>
+              </div>
+            </div>
+            <div id="ail-items-selector" class="favori-selector" style="max-height:350px; overflow-y:auto;">
+              <!-- Rempli dynamiquement -->
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button type="button" class="btn btn-primary text-white" onclick="saveItemListWidget()"><i class="fas fa-check me-1"></i> Créer la liste</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!--  PHASE 3 : MODALE EDITER WIDGET              -->
+    <!-- ============================================ -->
+    <div class="modal fade" id="modalEditWidget" tabindex="-1" style="z-index: 1090;">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header bg-warning text-dark">
+            <h5 class="modal-title"><i class="fas fa-pen me-2"></i>Modifier le widget</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <input type="hidden" id="ew-id">
+            <div class="mb-3">
+              <label class="form-label fw-bold">Titre</label>
+              <input type="text" class="form-control" id="ew-title">
+            </div>
+            <div class="row mb-3">
+              <div class="col-4">
+                <label class="form-label">Emoji</label>
+                <input type="text" class="form-control" id="ew-emoji" maxlength="4">
+              </div>
+              <div class="col-4">
+                <label class="form-label">Largeur (col.)</label>
+                <input type="number" class="form-control" id="ew-colspan" value="3" min="1" max="12">
+              </div>
+              <div class="col-4">
+                <label class="form-label">Hauteur (lig.)</label>
+                <input type="number" class="form-control" id="ew-rowspan" value="2" min="1" max="8">
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Couleur</label>
+              <div class="d-flex gap-2" id="ew-color-picker">
+                <span class="widget-color-swatch wc-teal-1" data-color="teal-1" onclick="pickColor('ew', this)"></span>
+                <span class="widget-color-swatch wc-teal-2" data-color="teal-2" onclick="pickColor('ew', this)"></span>
+                <span class="widget-color-swatch wc-teal-3" data-color="teal-3" onclick="pickColor('ew', this)"></span>
+                <span class="widget-color-swatch wc-teal-4" data-color="teal-4" onclick="pickColor('ew', this)"></span>
+                <span class="widget-color-swatch wc-teal-5" data-color="teal-5" onclick="pickColor('ew', this)"></span>
+                <span class="widget-color-swatch wc-teal-6" data-color="teal-6" onclick="pickColor('ew', this)"></span>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Position (ordre d'affichage)</label>
+              <input type="number" class="form-control" id="ew-order" min="0">
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-danger" onclick="deleteWidgetFromEdit()"><i class="fas fa-trash me-1"></i> Supprimer</button>
+            <button type="button" class="btn btn-primary text-white" onclick="saveEditWidget()"><i class="fas fa-check me-1"></i> Enregistrer</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!--  PHASE 3 : MODALE COPIER WIDGETS             -->
+    <!-- ============================================ -->
+    <div class="modal fade" id="modalCopyWidgets" tabindex="-1" style="z-index: 1080;">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header bg-dark text-white">
+            <h5 class="modal-title"><i class="fas fa-copy me-2"></i>Copier les widgets</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <p class="text-muted small mb-3">Sélectionnez les widgets à copier, ou copiez tout.</p>
+            <div class="mb-3">
+              <button class="btn btn-sm btn-dark w-100 mb-2" onclick="copyAllWidgets()"><i class="fas fa-copy me-1"></i> Tout copier</button>
+            </div>
+            <div id="copy-widgets-list"></div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-dark" onclick="copySelectedWidgets()"><i class="fas fa-copy me-1"></i> Copier la sélection</button>
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!--  PHASE 3 : MODALE CONFIG VIEWER              -->
+    <!-- ============================================ -->
+    <div class="modal fade" id="modalConfigViewer" tabindex="-1" style="z-index: 1080;">
+      <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title"><i class="fas fa-list me-2"></i>Stats listes BDD_CONFIG</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <p class="text-muted small mb-3">Vue complète de toutes les listes avec les compteurs. <strong>Calculez les stats d'abord</strong> pour voir les chiffres.</p>
+            <div id="config-viewer-content" class="stats-lists-grid">
+              <p class="text-muted text-center py-4">Calculez les statistiques pour voir les données.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!--  PHASE 4 : MODALE AJOUT WIDGET DASHBOARD     -->
+    <!-- ============================================ -->
+    <div class="modal fade" id="modalAddDashWidget" tabindex="-1" style="z-index: 1080;">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title"><i class="fas fa-plus-circle me-2"></i>Ajouter un widget au tableau de bord</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-3 mb-4">
+              <!-- Type selection -->
+              <div class="col-6 col-md-3">
+                <div class="card p-3 text-center h-100 dash-type-card" style="cursor:pointer; border:2px solid transparent;" onclick="selectDashWidgetType('dash_stat')" id="dwt-dash_stat">
+                  <i class="fas fa-chart-bar fa-2x text-primary mb-2"></i>
+                  <div class="fw-bold small">Statistique</div>
+                  <div class="text-muted" style="font-size:0.65rem">Depuis Plaidoyer</div>
+                </div>
+              </div>
+              <div class="col-6 col-md-3">
+                <div class="card p-3 text-center h-100 dash-type-card" style="cursor:pointer; border:2px solid transparent;" onclick="selectDashWidgetType('dash_rappels')" id="dwt-dash_rappels">
+                  <i class="fas fa-bell fa-2x text-warning mb-2"></i>
+                  <div class="fw-bold small">Rappels</div>
+                  <div class="text-muted" style="font-size:0.65rem">En retard & à faire</div>
+                </div>
+              </div>
+              <div class="col-6 col-md-3">
+                <div class="card p-3 text-center h-100 dash-type-card" style="cursor:pointer; border:2px solid transparent;" onclick="selectDashWidgetType('dash_action')" id="dwt-dash_action">
+                  <i class="fas fa-bolt fa-2x text-success mb-2"></i>
+                  <div class="fw-bold small">Action rapide</div>
+                  <div class="text-muted" style="font-size:0.65rem">Raccourci cliquable</div>
+                </div>
+              </div>
+              <div class="col-6 col-md-3">
+                <div class="card p-3 text-center h-100 dash-type-card" style="cursor:pointer; border:2px solid transparent;" onclick="selectDashWidgetType('dash_jeune')" id="dwt-dash_jeune">
+                  <i class="fas fa-user-tag fa-2x text-info mb-2"></i>
+                  <div class="fw-bold small">Jeune épinglé</div>
+                  <div class="text-muted" style="font-size:0.65rem">Fiche sur le dashboard</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Options dynamiques selon le type -->
+            <div id="dw-options-area">
+              <p class="text-muted text-center small">Choisissez un type de widget ci-dessus.</p>
+            </div>
+
+            <hr>
+            <div class="row g-2">
+              <div class="col-md-4">
+                <label class="form-label small fw-bold">Titre (optionnel)</label>
+                <input type="text" class="form-control form-control-sm" id="dw-custom-title" placeholder="Titre personnalisé...">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small fw-bold">Emoji</label>
+                <input type="text" class="form-control form-control-sm" id="dw-custom-emoji" value="📊" maxlength="4">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small fw-bold">Largeur</label>
+                <input type="number" class="form-control form-control-sm" id="dw-custom-colspan" value="3" min="1" max="12">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small fw-bold">Hauteur</label>
+                <input type="number" class="form-control form-control-sm" id="dw-custom-rowspan" value="2" min="1" max="8">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small fw-bold">Couleur</label>
+                <div class="d-flex gap-1 flex-wrap" id="dw-color-picker">
+                  <span class="widget-color-swatch wc-teal-1 active" data-color="teal-1" onclick="pickColor('dw', this)" style="width:26px;height:26px;"></span>
+                  <span class="widget-color-swatch wc-teal-2" data-color="teal-2" onclick="pickColor('dw', this)" style="width:26px;height:26px;"></span>
+                  <span class="widget-color-swatch wc-teal-3" data-color="teal-3" onclick="pickColor('dw', this)" style="width:26px;height:26px;"></span>
+                  <span class="widget-color-swatch wc-teal-4" data-color="teal-4" onclick="pickColor('dw', this)" style="width:26px;height:26px;"></span>
+                  <span class="widget-color-swatch wc-teal-5" data-color="teal-5" onclick="pickColor('dw', this)" style="width:26px;height:26px;"></span>
+                  <span class="widget-color-swatch wc-teal-6" data-color="teal-6" onclick="pickColor('dw', this)" style="width:26px;height:26px;"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button type="button" class="btn btn-primary text-white" onclick="saveDashWidget()"><i class="fas fa-check me-1"></i> Ajouter</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!--  PHASE 4 : MODALE EDITER WIDGET DASHBOARD    -->
+    <!-- ============================================ -->
+    <div class="modal fade" id="modalEditDashWidget" tabindex="-1" style="z-index: 1090;">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header bg-warning text-dark">
+            <h5 class="modal-title"><i class="fas fa-pen me-2"></i>Modifier le widget</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <input type="hidden" id="edw-id">
+            <div class="mb-3">
+              <label class="form-label fw-bold">Titre</label>
+              <input type="text" class="form-control" id="edw-title">
+            </div>
+            <div class="row mb-3">
+              <div class="col-4">
+                <label class="form-label">Emoji</label>
+                <input type="text" class="form-control" id="edw-emoji" maxlength="4">
+              </div>
+              <div class="col-4">
+                <label class="form-label">Largeur (col.)</label>
+                <input type="number" class="form-control" id="edw-colspan" value="3" min="1" max="12">
+              </div>
+              <div class="col-4">
+                <label class="form-label">Hauteur (lig.)</label>
+                <input type="number" class="form-control" id="edw-rowspan" value="2" min="1" max="8">
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Couleur</label>
+              <div class="d-flex gap-2" id="edw-color-picker">
+                <span class="widget-color-swatch wc-teal-1" data-color="teal-1" onclick="pickColor('edw', this)"></span>
+                <span class="widget-color-swatch wc-teal-2" data-color="teal-2" onclick="pickColor('edw', this)"></span>
+                <span class="widget-color-swatch wc-teal-3" data-color="teal-3" onclick="pickColor('edw', this)"></span>
+                <span class="widget-color-swatch wc-teal-4" data-color="teal-4" onclick="pickColor('edw', this)"></span>
+                <span class="widget-color-swatch wc-teal-5" data-color="teal-5" onclick="pickColor('edw', this)"></span>
+                <span class="widget-color-swatch wc-teal-6" data-color="teal-6" onclick="pickColor('edw', this)"></span>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Position (ordre)</label>
+              <input type="number" class="form-control" id="edw-order" min="0">
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-danger" onclick="deleteDashWidgetFromEdit()"><i class="fas fa-trash me-1"></i> Supprimer</button>
+            <button type="button" class="btn btn-primary text-white" onclick="saveEditDashWidget()"><i class="fas fa-check me-1"></i> Enregistrer</button>
           </div>
         </div>
       </div>
