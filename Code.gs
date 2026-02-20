@@ -109,15 +109,24 @@ function formatDate(dateObj) {
 }
 
 function parseDateSecure(input) {
-  if (!input) return new Date();
-  if (input instanceof Date) return input;
-  if (typeof input === 'string' && input.includes('/')) {
-    let parts = input.split(' ')[0].split('/'); 
-    if (parts.length === 3) {
-      return new Date(parts[2], parseInt(parts[1]) - 1, parts[0]);
+  if (!input || input === "") return null;
+  var d;
+  if (input instanceof Date) {
+    d = input;
+  } else {
+    var str = String(input).trim();
+    if (str === "") return null;
+    if (str.includes('/')) {
+      var parts = str.split(' ')[0].split('/');
+      if (parts.length === 3) {
+        d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+      }
     }
+    if (!d) d = new Date(str);
   }
-  return new Date(input);
+  if (!d || isNaN(d.getTime())) return null;
+  // Normaliser à minuit heure locale pour éviter les décalages de fuseau
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
 function getJeuneStatus(id) {
@@ -222,7 +231,7 @@ function getRappels() {
         let idJeune = dataRappels[i][0];
         let jInfo = jeunesMap[idJeune] || { nom: "Inconnu", tel: "", lieu: "" };
         let rawDate = dataRappels[i][4];
-        let echeance = parseDateSecure(rawDate);
+        let echeance = parseDateSecure(rawDate) || new Date();
         let isLate = echeance < today;
         
         result.push({
@@ -1222,13 +1231,14 @@ function getStatisticsDetailed(startStr, endStr) {
         filles++;
       }
 
-      if (dateCreation >= start && dateCreation <= end) {
+      if (dateCreation && dateCreation >= start && dateCreation <= end) {
         nouveaux++;
       }
     }
 
     for (let j = 1; j < dataEvents.length; j++) {
       let dateEvt = parseDateSecure(dataEvents[j][2]);
+      if (!dateEvt) continue;
       if (dateEvt >= start && dateEvt <= end) {
         let typeEvent = String(dataEvents[j][3] || "");
         let typeContact = String(dataEvents[j][4] || "");
@@ -1385,7 +1395,7 @@ function getStatistics(startStr, endStr) {
         }
       }
 
-      if (dateCreation >= start && dateCreation <= end) {
+      if (dateCreation && dateCreation >= start && dateCreation <= end) {
         stats.nouveaux++;
         let nat = dataJeunes[i][7] || "Inconnue";
         stats.nationalites[nat] = (stats.nationalites[nat] || 0) + 1;
@@ -1403,6 +1413,7 @@ function getStatistics(startStr, endStr) {
 
     for (let j = 1; j < dataEvents.length; j++) {
       let dateEvt = parseDateSecure(dataEvents[j][2]);
+      if (!dateEvt) continue;
       if (dateEvt >= start && dateEvt <= end) {
         let type = String(dataEvents[j][3]).toLowerCase();
         let details = String(dataEvents[j][6]).toLowerCase();
@@ -1762,7 +1773,7 @@ function computeAllWidgets(widgets, startStr, endStr) {
           
           for (var j = 1; j < dE.length; j++) {
             var dateEvt = parseDateSecure(dE[j][2]);
-            if (dateEvt < start || dateEvt > end) continue;
+            if (!dateEvt || dateEvt < start || dateEvt > end) continue;
             
             // Si on a un pool jeunes, vérifier que cet event concerne un jeune du pool
             var evtJeuneId = dE[j][1];
